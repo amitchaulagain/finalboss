@@ -2,17 +2,52 @@ import { json } from '@sveltejs/kit';
 import fs from 'fs';
 import path from 'path';
 
+const PROJECT_ROOT = process.cwd();
+
 export async function GET({ params }) {
   try {
-    // params.path will be something like "4316675164/job_details.json"
     const filePath = params.path;
-    const linkedinJobsPath = path.join(process.cwd(), 'jobs', 'linkedinjobs');
-    const jobPath = path.join(linkedinJobsPath, filePath);
 
-    console.log('📂 Looking for job file:', jobPath);
+    // Path traversal protection
+    const resolved = path.resolve(PROJECT_ROOT, filePath);
+    if (!resolved.startsWith(PROJECT_ROOT)) {
+      return json({
+        success: false,
+        error: 'Invalid path'
+      }, { status: 400 });
+    }
 
-    if (!fs.existsSync(jobPath)) {
-      console.error('❌ Job file not found:', jobPath);
+    // Try candidate paths in priority order
+    const candidates = [
+      // New canonical: jobs/{platform}/{id}/job_details.json
+      path.join(PROJECT_ROOT, 'jobs', filePath),
+      // Legacy LinkedIn: jobs/linkedinjobs/{path}
+      path.join(PROJECT_ROOT, 'jobs', 'linkedinjobs', filePath),
+      // Legacy bots: src/bots/jobs/{path} (for bots-jobs/ prefix from GET listing)
+      ...(filePath.startsWith('bots-jobs/')
+        ? [path.join(PROJECT_ROOT, 'src', 'bots', 'jobs', filePath.replace('bots-jobs/', ''))]
+        : [path.join(PROJECT_ROOT, 'src', 'bots', 'jobs', filePath)]),
+    ];
+
+    // Multi-tenant: clients/*/jobs/{path}
+    const clientsDir = path.join(PROJECT_ROOT, 'clients');
+    if (filePath.startsWith('clients/') && fs.existsSync(clientsDir)) {
+      candidates.push(path.join(PROJECT_ROOT, filePath));
+    }
+
+    let jobPath = null;
+    for (const candidate of candidates) {
+      // Re-check traversal for each resolved candidate
+      const resolvedCandidate = path.resolve(candidate);
+      if (!resolvedCandidate.startsWith(PROJECT_ROOT)) continue;
+
+      if (fs.existsSync(candidate)) {
+        jobPath = candidate;
+        break;
+      }
+    }
+
+    if (!jobPath) {
       return json({
         success: false,
         error: `Job file not found: ${filePath}`
@@ -20,7 +55,6 @@ export async function GET({ params }) {
     }
 
     const jobData = JSON.parse(fs.readFileSync(jobPath, 'utf-8'));
-    console.log('✅ Job data loaded:', jobData.job_id || 'unknown');
 
     return json({
       success: true,
@@ -29,7 +63,7 @@ export async function GET({ params }) {
       }
     });
   } catch (error) {
-    console.error('❌ Error loading job details:', error);
+    console.error('Error loading job details:', error);
     return json({
       success: false,
       error: error.message

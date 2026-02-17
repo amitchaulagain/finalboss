@@ -191,7 +191,7 @@
     isLoading = true;
     try {
       // Load jobs from corpus-rag API
-      const response = await fetch(`${CORPUS_RAG_API}/api/jobs`, {
+      const response = await fetch(`/api/jobs`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json'
@@ -231,7 +231,7 @@
 
     try {
       // Load job details from corpus-rag API
-      const response = await fetch(`${CORPUS_RAG_API}/api/jobs/${encodeURIComponent(job.filename)}`, {
+      const response = await fetch(`/api/jobs/${encodeURIComponent(job.filename)}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json'
