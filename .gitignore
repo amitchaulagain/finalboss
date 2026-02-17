@@ -23,3 +23,14 @@ src/lib/authorized-users.json
 # Google OAuth credentials (never commit these)
 google_credentials.json
 *_credentials.json
+
+# IDE files
+.cursor/
+
+# Debug and log files
+*.debug.log
+*-debug.log
+logs/
+
+# LinkedIn job data
+jobs/linkedinjobs/
