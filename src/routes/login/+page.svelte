@@ -283,6 +283,3 @@
   </div>
 </main>
 
-<style>
-  /* You can add component-specific styles here if needed */
-</style>

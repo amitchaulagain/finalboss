@@ -15,23 +15,27 @@ export class CorpusRagAuth {
    * Get current authentication token
    * @returns {string|null} - Bearer token for API requests
    */
-  static getToken() {
+  static async getToken() {
     if (!browser) return null;
 
-    // Try to get from authService first (preferred)
-    const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
-    return token;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke('read_file_async', { filename: '.cache/auth_access_token.txt' });
+    } catch {
+      return null;
+    }
   }
 
   /**
    * Get current authenticated user
    * @returns {Object|null} - User object or null
    */
-  static getCurrentUser() {
+  static async getCurrentUser() {
     if (!browser) return null;
 
     try {
-      const userStr = localStorage.getItem('user') || sessionStorage.getItem('user');
+      const { invoke } = await import('@tauri-apps/api/core');
+      const userStr = await invoke('read_file_async', { filename: '.cache/auth_user.json' });
       if (!userStr) return null;
 
       const user = JSON.parse(userStr);
@@ -59,8 +63,8 @@ export class CorpusRagAuth {
    * Check if user is authenticated
    * @returns {boolean}
    */
-  static isAuthenticated() {
-    return this.getToken() !== null;
+  static async isAuthenticated() {
+    return (await this.getToken()) !== null;
   }
 
   /**
@@ -78,7 +82,7 @@ export class CorpusRagAuth {
    * @returns {Promise<{valid: boolean, user?: Object, error?: string}>}
    */
   static async validateSession() {
-    const token = this.getToken();
+    const token = await this.getToken();
 
     if (!token) {
       return { valid: false, error: 'No token found' };
