@@ -47,7 +47,8 @@ export async function fillQuestionFieldDetailed(
   containerSelector: string, // The robust selector for the question's container
   questionType: string,
   answer: any,
-  modalScopeSelector?: string // Optional: scope to this modal (e.g. "[data-test-modal-id='easy-apply-modal']")
+  modalScopeSelector?: string, // Optional: scope to this modal (e.g. "[data-test-modal-id='easy-apply-modal']")
+  radioName?: string // Optional: name attribute for radio group filtering
 ): Promise<FillQuestionResult> {
   if (!containerSelector) {
     printLog('❌ Cannot fill field: containerSelector is missing.');
@@ -59,7 +60,9 @@ export async function fillQuestionFieldDetailed(
     ? 'var modal = document.querySelector(arguments[0]); var container = modal ? modal.querySelector(arguments[1]) : null;'
     : 'var container = document.querySelector(arguments[0]);';
   const selectArgs = modalScopeSelector ? [modalScopeSelector, containerSelector, answer] : [containerSelector, answer];
-  const radioArgs = modalScopeSelector ? [modalScopeSelector, containerSelector, answer] : [containerSelector, answer];
+  const radioArgs = modalScopeSelector
+    ? [modalScopeSelector, containerSelector, answer, radioName || '']
+    : [containerSelector, answer, radioName || ''];
   const checkboxArgs = modalScopeSelector ? [modalScopeSelector, containerSelector, Array.isArray(answer) ? answer : [answer]] : [containerSelector, Array.isArray(answer) ? answer : [answer]];
 
   try {
@@ -110,29 +113,69 @@ export async function fillQuestionFieldDetailed(
         return { success: true, failureReason: 'none' };
 
       case 'radio':
-        const radioResult = await ctx.driver.executeScript(`
+        const radioNameIdx = modalScopeSelector ? 3 : 2;
+        // Step 1: Find the target radio button and return its ID for Selenium click
+        const radioData = await ctx.driver.executeScript(`
           ${getContainerScript}
           if (!container) return { success: false, error: 'Container not found' };
 
-          const radioButtons = container.querySelectorAll('input[type="radio"]');
-          const answerIndex = arguments[${answerIdx}];
+          var radioNameFilter = arguments[${radioNameIdx}];
+          var selector = radioNameFilter
+            ? 'input[type="radio"][name="' + radioNameFilter + '"]'
+            : 'input[type="radio"]';
+          var radioButtons = container.querySelectorAll(selector);
+          var answerIndex = arguments[${answerIdx}];
 
           if (radioButtons && radioButtons[answerIndex]) {
-            radioButtons[answerIndex].checked = true;
-            radioButtons[answerIndex].dispatchEvent(new Event('change', { bubbles: true }));
-            return { success: true };
+            var target = radioButtons[answerIndex];
+            // Ensure it has an ID for Selenium to find it
+            if (!target.id) {
+              target.id = 'seek-radio-fill-' + Date.now() + '-' + answerIndex;
+            }
+            return { success: true, radioId: target.id, totalRadios: radioButtons.length };
           }
-          return { success: false, error: 'Radio button not found. Found radios: ' + radioButtons.length + ', requested index: ' + answerIndex };
+          return { success: false, error: 'Radio button not found. Found radios: ' + radioButtons.length + ', requested index: ' + answerIndex + ', nameFilter: ' + (radioNameFilter || 'none') };
         `, ...radioArgs);
 
-        if (!radioResult.success) {
-          printLog(`Failed to fill radio: ${radioResult.error}`);
+        if (!radioData.success) {
+          printLog(`Failed to find radio: ${radioData.error}`);
           return {
             success: false,
-            failureReason: mapFailureReason(questionType, String(radioResult.error || '')),
-            error: String(radioResult.error || '')
+            failureReason: mapFailureReason(questionType, String(radioData.error || '')),
+            error: String(radioData.error || '')
           };
         }
+
+        // Step 2: Click the radio button using Selenium (fires all native events)
+        try {
+          const radioElement = await ctx.driver.findElement({ css: `input[id="${radioData.radioId}"]` });
+          await radioElement.click();
+          printLog(`✅ Clicked radio button (ID: ${radioData.radioId})`);
+        } catch (clickError) {
+          printLog(`❌ Failed to click radio button: ${clickError}`);
+          return {
+            success: false,
+            failureReason: mapFailureReason(questionType, String(clickError)),
+            error: String(clickError)
+          };
+        }
+
+        // Step 3: Verify the radio button is checked
+        const radioVerify = await ctx.driver.executeScript(`
+          var radio = document.getElementById(arguments[0]);
+          return radio ? { checked: radio.checked } : { checked: false };
+        `, radioData.radioId);
+
+        if (!radioVerify.checked) {
+          printLog(`⚠️ Radio button verification failed - not checked after click`);
+          return {
+            success: false,
+            failureReason: 'element_not_interactable',
+            error: 'Radio button was not checked after clicking'
+          };
+        }
+
+        printLog(`✅ Radio button verified as checked`);
         return { success: true, failureReason: 'none' };
 
       case 'text':
@@ -312,9 +355,10 @@ export async function fillQuestionField(
   containerSelector: string,
   questionType: string,
   answer: any,
-  modalScopeSelector?: string
+  modalScopeSelector?: string,
+  radioName?: string
 ): Promise<boolean> {
-  const result = await fillQuestionFieldDetailed(ctx, containerSelector, questionType, answer, modalScopeSelector);
+  const result = await fillQuestionFieldDetailed(ctx, containerSelector, questionType, answer, modalScopeSelector, radioName);
   return result.success;
 }
 
@@ -351,7 +395,7 @@ export async function* answerEmployerQuestions(ctx: WorkflowContext): AsyncGener
         printLog(`🎯 Filling Q${i + 1} [${question.answerSource}]: "${question.question}"`);
 
         let answer;
-        if (question.type === 'select') {
+        if (question.type === 'select' || question.type === 'radio') {
           answer = question.selectedAnswer;
         } else if (question.type === 'text') {
           answer = question.textAnswer;
@@ -381,7 +425,7 @@ export async function* answerEmployerQuestions(ctx: WorkflowContext): AsyncGener
         }
 
         if (answer !== undefined && answer !== null && question.answerSource !== 'No Answer') {
-          const filled = await fillQuestionField(ctx, question.containerSelector, question.type, answer);
+          const filled = await fillQuestionField(ctx, question.containerSelector, question.type, answer, undefined, question.radioName);
           const options = question.options || question.opts || [];
           const selected =
             question.type === 'select' || question.type === 'radio'

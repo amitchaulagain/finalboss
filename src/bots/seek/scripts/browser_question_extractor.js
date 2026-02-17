@@ -83,7 +83,8 @@ function extractEmployerQuestions() {
         question: questionText,
         options: options,
         containerSelector: containerSelector,
-        elementId: forId
+        elementId: forId,
+        radioName: formElement.name
       });
     } else if (formElement.type === 'checkbox') {
       // For checkboxes, group by name to handle multi-select questions

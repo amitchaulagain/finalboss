@@ -33,10 +33,7 @@ export function ensureDir(dirPath: string): void {
 }
 
 export function getLegacyJobDir(platform: 'seek' | 'linkedin' | 'indeed' | 'other', jobId: string): string {
-  if (platform === 'linkedin') {
-    return path.join(process.cwd(), 'jobs', 'linkedinjobs', String(jobId));
-  }
-  return path.join(process.cwd(), 'src', 'bots', 'jobs', String(jobId));
+  return path.join(process.cwd(), 'jobs', platform, String(jobId));
 }
 
 export function getJobArtifactDir(ctx: any, platform: 'seek' | 'linkedin' | 'indeed' | 'other', jobId: string): string {
@@ -57,6 +54,12 @@ export function getJobArtifactCandidates(ctx: any, platform: 'seek' | 'linkedin'
   if (clientEmail) {
     dirs.push(getClientJobDir(clientEmail, platform, jobId));
   }
+  // New canonical path
   dirs.push(getLegacyJobDir(platform, jobId));
+  // Old legacy paths as read fallbacks
+  if (platform === 'linkedin') {
+    dirs.push(path.join(process.cwd(), 'jobs', 'linkedinjobs', String(jobId)));
+  }
+  dirs.push(path.join(process.cwd(), 'src', 'bots', 'jobs', String(jobId)));
   return Array.from(new Set(dirs));
 }
