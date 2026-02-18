@@ -23,8 +23,8 @@ AI-powered job application automation platform that integrates with job boards (
 
 ### Prerequisites
 - Node.js (v18 or higher)
-- npm or bun
-- MongoDB (for corpus-rag API integration)
+- **bun** (recommended) or npm — this project uses bun per monorepo conventions
+- MongoDB is required only for the **corpus-rag** API (run corpus-rag separately for AI features)
 - Chrome/Chromium browser (for bot automation)
 
 ### Installation
@@ -44,31 +44,31 @@ AI-powered job application automation platform that integrates with job boards (
 
 3. **Install dependencies:**
    ```bash
-   npm install
-   # or
    bun install
+   # or
+   npm install
    ```
 
 4. **Configure environment variables:**
-   Create a `.env` file in the root directory:
+   Create a `.env` or `.env.local` file in the project root:
    ```bash
-   # API Configuration
+   # Corpus-rag API (default if not set)
    PUBLIC_API_BASE=http://localhost:3000
    VITE_API_BASE=http://localhost:3000
-
-   # Add other required environment variables
    ```
 
 5. **Start the development server:**
    ```bash
-   npm run dev
+   bun run dev
    # or
-   npm run dev:plain
+   npm run dev
+   # Without env loading:
+   bun run dev:plain
    ```
 
 6. **Access the application:**
-   - Web: `http://localhost:5173` (or the port shown in terminal)
-   - Tauri Desktop App: `npm run tauri:dev`
+   - Web: `http://localhost:1420` (Vite is configured for port 1420 for Tauri)
+   - Tauri Desktop App: `bun run tauri:dev` or `npm run tauri:dev`
 
 ---
 
@@ -78,31 +78,32 @@ FinalBoss is a comprehensive job application automation platform with the follow
 
 ### Core Features
 - **Job Board Integration**: Automated job searching and application on LinkedIn, Indeed, and Seek
-- **AI-Powered Content Generation**: 
+- **AI-Powered Content Generation** (via corpus-rag API):
   - Personalized cover letters
   - Tailored resume enhancement
-  - Intelligent question answering
-- **API Testing Interface**: Built-in API testing tools for corpus-rag integration
-- **Desktop Application**: Tauri-based desktop app for cross-platform support
+  - Intelligent employer Q&A
+- **Resume Builder**: Create and manage resumes used by bots and AI
+- **Token plans & billing**: Stripe checkout, token balance, order history (via corpus-rag)
+- **API Testing Interface**: Built-in API testing at `/api-test` for corpus-rag integration
+- **Desktop Application**: Tauri 2–based desktop app for cross-platform support
 
 ### Components
 
-1. **Web Interface** (SvelteKit)
-   - User dashboard
-   - Bot selection and configuration
-   - API testing interface
-   - Cover letter and resume generation pages
+1. **Web Interface** (SvelteKit 2, Svelte 5, static adapter)
+   - App shell, login, token/plans/orders/payment flows
+   - Bot selection and configuration (choose-bot, control-bar)
+   - API testing interface (`/api-test`)
+   - Cover letter, resume enhancement, resume builder, job analytics, generic questions
 
-2. **Bot Automation System**
-   - LinkedIn bot
-   - Indeed bot
-   - Seek bot
-   - Workflow-based automation engine
+2. **Bot Automation System** (`src/bots/`)
+   - **core/**: Workflow engine (YAML steps), browser manager (Selenium/Playwright), humanization, session manager, universal overlay
+   - **seek/**, **linkedin/**, **indeed/**: Per-platform impls with `*_impl.ts`, `*_steps.yaml`, and `config/*_selectors.json`
+   - Entry: `bot_starter.ts`; shared config: `user-bots-config.json`
 
 3. **API Integration**
-   - Corpus-rag API client
-   - Authentication handling
-   - Job application processing
+   - `corpus-rag-client.js`, `corpus-rag-auth.js`, `api-config.js`
+   - JWT refresh and token persistence (e.g. `.cache/jwt_tokens.json`)
+   - Job application handling and proxy routes under `src/routes/api/`
 
 ---
 
@@ -110,27 +111,28 @@ FinalBoss is a comprehensive job application automation platform with the follow
 
 ### Available Scripts
 
+Use **bun** (recommended) or npm:
+
 ```bash
 # Development
-npm run dev              # Start dev server with environment variables
-npm run dev:plain        # Start dev server without env loading
+bun run dev              # Start dev server (port 1420, loads .env)
+bun run dev:plain        # Start dev server without env loading
 
 # Building
-npm run build            # Build for production
-npm run preview          # Preview production build
+bun run build            # Vite production build (static SPA)
+bun run preview          # Preview production build
 
 # Tauri (Desktop App)
-npm run tauri            # Tauri CLI commands
-npm run tauri:dev        # Run Tauri dev mode
+bun run tauri            # Tauri CLI (e.g. tauri build)
+bun run tauri:dev        # Tauri dev mode with env
 
-# Testing
-npm run test             # Run tests
-npm run test:run         # Run tests once
-npm run test:watch       # Run tests in watch mode
+# Testing (Vitest)
+bun run test             # Watch mode
+bun run test:run         # Single run
 
 # Type Checking
-npm run check            # Type check Svelte components
-npm run check:watch      # Type check in watch mode
+bun run check            # svelte-check
+bun run check:watch      # svelte-check watch
 ```
 
 ### Project Structure
@@ -138,23 +140,27 @@ npm run check:watch      # Type check in watch mode
 ```
 finalboss/
 ├── src/
-│   ├── routes/          # SvelteKit routes
-│   │   ├── api/         # API endpoints
-│   │   ├── api-test/    # API testing interface
-│   │   ├── cover-letters/
-│   │   ├── resume-enhancement/
+│   ├── routes/              # SvelteKit routes (static adapter)
+│   │   ├── api/             # Client-side API proxies to corpus-rag
+│   │   ├── api-test/        # API testing UI
+│   │   ├── app/, login/, choose-bot/, control-bar/
+│   │   ├── cover-letters/, resume-enhancement/, resume-builder/
+│   │   ├── job-analytics/, generic-questions/, tokens/, plans/, payment/, orders/
 │   │   └── ...
-│   ├── bots/            # Bot implementations
+│   ├── bots/                # Bot automation
+│   │   ├── core/            # Workflow engine, browser manager, humanization, overlay
+│   │   ├── bot_starter.ts   # Entry point
+│   │   ├── user-bots-config.json
+│   │   ├── seek/            # *_impl.ts, *_steps.yaml, config/*_selectors.json
 │   │   ├── linkedin/
-│   │   ├── indeed/
-│   │   └── seek/
-│   ├── lib/             # Shared libraries
-│   │   ├── corpus-rag-client.js
-│   │   ├── corpus-rag-auth.js
-│   │   └── job-application-handler.js
+│   │   └── indeed/
+│   ├── lib/                 # Shared code
+│   │   ├── corpus-rag-client.js, corpus-rag-auth.js, api-config.js
+│   │   ├── job-application-handler.js, authService.js
+│   │   └── ...
 │   └── ...
-├── src-tauri/           # Tauri desktop app code
-├── static/              # Static assets
+├── src-tauri/               # Tauri 2 desktop shell
+├── static/
 └── package.json
 ```
 
@@ -166,18 +172,17 @@ FinalBoss integrates with the corpus-rag API for AI-powered content generation. 
 
 ### Authentication Flow
 
-1. User logs in through finalboss
-2. Session token is stored in localStorage
-3. Session token is converted to JWT for API calls
-4. JWT is used for authenticated API requests
+1. User logs in through finalboss (or service account via client_id/secret).
+2. Session is converted to JWT via corpus-rag (`/api/auth/session-to-jwt`).
+3. JWT (and refresh token) are stored and persisted (e.g. `.cache/jwt_tokens.json`) for reuse across runs.
+4. corpus-rag-client uses the JWT for all API requests and refreshes on 401.
 
-### API Endpoints Used
+### API Endpoints Used (corpus-rag)
 
-- `/api/auth/session-to-jwt` - Convert session token to JWT
-- `/api/cover_letter` - Generate cover letters
-- `/api/resume` - Enhance resumes
-- `/api/question_answers` - Answer employer questions
-- `/api/jobs` - Manage job listings
+- `/api/auth/session-to-jwt`, `/api/auth/token`, `/api/auth/refresh` — Auth and JWT
+- `/api/cover_letter`, `/api/resume`, `/api/questionAndAnswers` — AI generation
+- `/api/jobs`, `/api/upload` — Job listings and file uploads
+- `/api/tokens/`, `/api/plans/`, `/api/orders/` — Billing and tokens
 
 ---
 
@@ -195,7 +200,8 @@ The application includes a built-in API testing interface at `/api-test` that al
 ### Running Tests
 
 ```bash
-npm run test
+bun run test          # Watch mode
+bun run test:run      # Single run
 ```
 
 ---
@@ -205,14 +211,14 @@ npm run test
 ### Web Build
 
 ```bash
-npm run build
-npm run preview  # Test production build locally
+bun run build
+bun run preview   # Test production build locally
 ```
 
 ### Tauri Desktop Build
 
 ```bash
-npm run tauri build
+bun run tauri build
 ```
 
 ---
@@ -221,16 +227,17 @@ npm run tauri build
 
 ### Environment Variables
 
-Key environment variables:
+- `PUBLIC_API_BASE` — Base URL for corpus-rag API (e.g. `http://localhost:3000`)
+- `VITE_API_BASE` — Same, used by Vite-backed code
 
-- `PUBLIC_API_BASE` - Base URL for corpus-rag API
-- `VITE_API_BASE` - Alternative API base URL
+Loaded from `.env` or `.env.local` when using `bun run dev` / `bun run tauri:dev`.
 
 ### Bot Configuration
 
-Bot configurations are stored in:
-- `src/bots/{bot-name}/{bot-name}_steps.yaml` - Workflow steps
-- `src/bots/{bot-name}/{bot-name}_selectors.json` - DOM selectors
+- `src/bots/user-bots-config.json` — Shared keywords, locations, resume path
+- `src/bots/{seek,linkedin,indeed}/*_steps.yaml` — Workflow steps and transitions
+- `src/bots/{seek,linkedin,indeed}/config/*_selectors.json` — DOM selectors
+- See `src/bots/BOT_STANDARDS.md` for the full bot contract
 
 ---
 
@@ -244,9 +251,9 @@ Bot configurations are stored in:
    - Verify network connectivity
 
 2. **Authentication Issues**
-   - Clear localStorage and sessionStorage
+   - Clear localStorage and sessionStorage; optionally remove `.cache/jwt_tokens.json` and `.cache/api_token.txt`
    - Re-login to get fresh tokens
-   - Check token expiration
+   - Check token expiration and corpus-rag JWT settings
 
 3. **Bot Automation Failures**
    - Ensure Chrome/Chromium is installed
@@ -310,6 +317,6 @@ For issues, feature requests, or questions, please open an issue on GitHub.
 # Before production deployment
 git checkout alpha
 git pull origin alpha
-npm run build
-npm run test:run
+bun run build
+bun run test:run
 ```
