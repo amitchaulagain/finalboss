@@ -126,7 +126,7 @@ export class BotRegistry {
         return config_module.default || config_module;
       } else {
         // Use core user config as fallback
-        const core_config_path = path.join(__dirname, 'user-bots-config.json');
+        const core_config_path = path.join(__dirname, '../user-bots-config.json');
         if (fs.existsSync(core_config_path)) {
           console.log(`[Registry] Using core configuration for '${bot_name}'`);
           return JSON.parse(fs.readFileSync(core_config_path, 'utf8'));

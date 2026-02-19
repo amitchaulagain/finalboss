@@ -108,7 +108,7 @@ export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void,
     const selectorsPath = fs.existsSync(selectorsConfigPath) ? selectorsConfigPath : selectorsRootPath;
     ctx.selectors = JSON.parse(fs.readFileSync(selectorsPath, 'utf-8'));
 
-    const configPath = path.join(__dirname, '../core/user-bots-config.json');
+    const configPath = path.join(__dirname, '../user-bots-config.json');
     if (fs.existsSync(configPath)) {
       ctx.config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
     } else {

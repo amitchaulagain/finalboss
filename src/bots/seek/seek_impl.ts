@@ -169,7 +169,7 @@ function build_search_url(base_url: string, keywords: string, location: string):
 // Step 0: Initialize Context
 export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   const selectors = JSON.parse(fs.readFileSync(path.join(__dirname, 'config/seek_selectors.json'), 'utf8'));
-  const config = JSON.parse(fs.readFileSync(path.join(__dirname, '../core/user-bots-config.json'), 'utf8'));
+  const config = JSON.parse(fs.readFileSync(path.join(__dirname, '../user-bots-config.json'), 'utf8'));
 
   ctx.selectors = selectors;
   ctx.config = config;

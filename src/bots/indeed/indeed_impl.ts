@@ -38,7 +38,7 @@ export async function* step0(ctx: PlaywrightWorkflowContext): AsyncGenerator<str
     );
 
     const config = JSON.parse(
-      fs.readFileSync(path.join(__dirname, '../core/user-bots-config.json'), 'utf8')
+      fs.readFileSync(path.join(__dirname, '../user-bots-config.json'), 'utf8')
     );
 
     // Set context

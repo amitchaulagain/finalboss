@@ -23,7 +23,7 @@
     "@auth/core": "^0.40.0",
     "@auth/sveltekit": "^1.10.0",
     "@tailwindcss/typography": "^0.5.19",
-    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/api": "^2.4.0",
     "@tauri-apps/plugin-fs": "^2.4.5",
     "@tauri-apps/plugin-opener": "^2.5.3",
     "@types/js-yaml": "^4.0.9",

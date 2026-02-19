@@ -115,7 +115,7 @@ export const monitorBrowserClose = (driver: WebDriver, onBrowserClosed?: () => v
 
 export const setupChromeDriver = async (botName: string = 'seek'): Promise<{ driver: WebDriver; actions: any; sessionExists: boolean; sessionsDir: string; stopMonitoring?: () => void }> => {
   try {
-    const configPath = path.join(__dirname, 'user-bots-config.json');
+    const configPath = path.join(__dirname, '../user-bots-config.json');
     const config: BotConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
     // Create session management like botrunner.ts

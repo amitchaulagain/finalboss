@@ -24,13 +24,30 @@ src/lib/authorized-users.json
 google_credentials.json
 *_credentials.json
 
+# Authentication tokens and credentials (CRITICAL)
+.cache/
+*.token
+*.jwt
+jwt_tokens.json
+api_token.txt
+
+# User configuration files (contains personal preferences and API keys)
+src/bots/core/user-bots-config.json
+src/bots/user-bots-config.json
+src-tauri/src/bots/user-bots-config.json
+deknilJobsIds.json
+
+# Job application data (personal information)
+jobs/
+apitestjsons/
+data/
+
 # IDE files
 .cursor/
 
 # Debug and log files
 *.debug.log
 *-debug.log
+*.log
 logs/
-
-# LinkedIn job data
-jobs/linkedinjobs/
+debug/

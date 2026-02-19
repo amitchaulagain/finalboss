@@ -2,6 +2,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { onMount, onDestroy } from 'svelte';
+  import { goto } from '$app/navigation';
   import BotStats from '$lib/components/BotStats.svelte';
 
   // Dynamic bot list
@@ -56,6 +57,9 @@
 
   // Running bots tracking - supports multiple concurrent bots
   let runningBots = [];
+
+  // Config validation state
+  let showConfigError = false;
 
   function handleBotProgressEvent(event) {
     console.log('Bot progress event:', event);
@@ -167,6 +171,17 @@
 
   async function runBot(botName) {
     try {
+      // CHECK: Does config file exist by trying to read it
+      try {
+        await invoke('read_file_async', {
+          filename: 'src/bots/user-bots-config.json'
+        });
+      } catch (readError) {
+        // File doesn't exist or can't be read
+        showConfigError = true;
+        return;
+      }
+
       console.log(`Starting ${botName} with streaming...`);
 
       // Convert bot names: seek_bot -> seek
@@ -188,6 +203,12 @@
       // Show error in UI
       alert(`Failed to start bot: ${error}`);
     }
+  }
+
+  // Function to navigate to config page
+  function goToConfig() {
+    showConfigError = false;
+    goto('/frontend-form');
   }
 
 </script>
@@ -266,3 +287,32 @@
     </div>
   {/if}
 </div>
+
+<!-- Config Missing Error Modal -->
+{#if showConfigError}
+  <div class="modal modal-open">
+    <div class="modal-box bg-error text-error-content">
+      <h3 class="font-bold text-lg mb-4">⚠️ Configuration Required</h3>
+      <p class="mb-4">
+        You need to create your bot configuration before running any bots.
+      </p>
+      <p class="mb-6">
+        Please go to the <strong>Configuration</strong> page and set up your:
+      </p>
+      <ul class="list-disc list-inside mb-6 space-y-1">
+        <li>Job search keywords (e.g., "Java developer", "Data Analyst")</li>
+        <li>Preferred location (e.g., "Sydney", "Remote")</li>
+        <li>Other preferences (optional)</li>
+      </ul>
+      <div class="modal-action">
+        <button class="btn btn-primary" on:click={goToConfig}>
+          Go to Configuration Page
+        </button>
+        <button class="btn btn-ghost" on:click={() => showConfigError = false}>
+          Cancel
+        </button>
+      </div>
+    </div>
+    <div class="modal-backdrop" on:click={() => showConfigError = false}></div>
+  </div>
+{/if}
