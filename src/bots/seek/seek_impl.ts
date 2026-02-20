@@ -413,6 +413,17 @@ export async function* clickJobCard(ctx: WorkflowContext): AsyncGenerator<string
     await ctx.driver.executeScript("arguments[0].scrollIntoView(true);", cards[index]);
     await cards[index].click();
     await ctx.driver.sleep(2000); // Wait for details panel to load
+
+    // Detect narrow-window responsive layout: Seek opens job detail in a new tab
+    const handles = await ctx.driver.getAllWindowHandles();
+    if (handles.length > 1) {
+      await ctx.driver.switchTo().window(handles[handles.length - 1]);
+      ctx.jobDetailOpenedInNewTab = true;
+      printLog("Narrow-window mode: switched to job detail tab");
+    } else {
+      ctx.jobDetailOpenedInNewTab = false;
+    }
+
     ctx.job_index = index + 1;
     yield "job_card_clicked";
   } catch {
@@ -1044,14 +1055,17 @@ export async function* closeQuickApplyAndContinueSearch(ctx: WorkflowContext): A
     printLog(`Found ${handles.length} window handles`);
 
     if (handles.length > 1) {
-      // Close current tab/window
-      await ctx.driver.close();
+      // Close all extra tabs (job detail + quick-apply) from last to first, keeping handles[0]
+      for (let i = handles.length - 1; i >= 1; i--) {
+        await ctx.driver.switchTo().window(handles[i]);
+        await ctx.driver.close();
+      }
 
-      // Switch back to main window (first handle)
+      // Switch back to main window (search results tab)
       await ctx.driver.switchTo().window(handles[0]);
+      ctx.jobDetailOpenedInNewTab = false;
       await ctx.driver.sleep(1000);
 
-      // Verify we're back on the job search page
       const currentUrl = await ctx.driver.getCurrentUrl();
       printLog(`Switched back to main window: ${currentUrl}`);
     } else {
