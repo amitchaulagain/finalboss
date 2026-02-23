@@ -2,15 +2,17 @@
   import { onMount } from 'svelte';
   import { invoke } from "@tauri-apps/api/core"
   import { env } from '$env/dynamic/public';
-  import { getManagedFiles, registerManagedFile, registerManagedBinaryFile } from '$lib/file-manager';
-  
+  import { API_URLS } from '$lib/api-config.js';
+  import { getManagedFiles, registerManagedFile, registerManagedBinaryFile, previewManagedFile } from '$lib/file-manager';
+  import { parseResumeText, type ParsedResume } from '$lib/resume/parser';
+
   let formData = {
     fullName: '',
+    address: '',
     email: '',
     phone: '',
     linkedinUrl: '',
     keywords: '',
-    locations: '',
     minSalary: '',
     maxSalary: '',
     jobType: 'any',
@@ -18,28 +20,31 @@
     industry: '',
     listedDate: '',
     remotePreference: 'any',
-    rightToWork: 'citizen',
     rewriteResume: false,
     excludedCompanies: '',
     excludedKeywords: '',
-    skillWeight: '0.4',
-    locationWeight: '0.2',
-    salaryWeight: '0.3',
-    companyWeight: '0.1',
-    enableDeepSeek: false,
-    deepSeekApiKey: '',
     acceptTerms: false,
     resumeFileName: ''
   };
 
-  let isAdvancedMode = false;
-  let showSmartMatching = false;
-  let showDeepSeek = false;
+  // Resume state
   let isSubmitting = false;
   let resumeFile: { name: string } | null = null;
   let resumeUploaded = false;
   let availableResumeFiles: string[] = [];
   let uploadValidationMessage = '';
+  let extractedResumeText = '';
+  let parsedResumeData: ParsedResume | null = null;
+
+  // Q&A state
+  let questionsData: any = null;
+  let editingQuestions: Record<string | number, { keywords: string; answers: string }> = {};
+  let questionsLoading = true;
+  let questionsSaving = false;
+
+  // Config path (resolved from Tauri on mount)
+  let appConfigPath = '';
+
   const CORPUS_RAG_API = env?.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || 'http://localhost:3000';
   const ALLOWED_RESUME_EXTENSIONS = ['.doc', '.docx', '.pdf'];
 
@@ -48,8 +53,9 @@
     return ALLOWED_RESUME_EXTENSIONS.some((ext) => lower.endsWith(ext));
   }
 
-  onMount(() => {
-    loadConfig();
+  onMount(async () => {
+    await loadConfig();
+    await loadQuestions();
   });
 
   const industries = [
@@ -86,38 +92,7 @@
     { value: '30_trades', label: 'Trades & Services' }
   ];
 
-  const workRightOptions = [
-    { value: 'citizen', label: "I'm an Australian citizen" },
-    { value: 'permanent_resident', label: "I'm a permanent resident and/or NZ citizen" },
-    { value: 'partner_visa', label: 'I have a family/partner visa with no restrictions' },
-    { value: 'graduate_visa', label: 'I have a graduate temporary work visa' },
-    { value: 'holiday_visa', label: 'I have a holiday temporary work visa' },
-    { value: 'regional_visa', label: 'I have a temporary visa with restrictions on work location (e.g. skilled regional visa 491)' },
-    { value: 'protection_visa', label: 'I have a temporary protection or safe haven enterprise work visa' },
-    { value: 'doctoral_visa', label: 'I have a temporary visa with no restrictions (e.g. doctoral student)' },
-    { value: 'hour_restricted_visa', label: 'I have a temporary visa with restrictions on work hours (e.g. student visa, retirement visa)' },
-    { value: 'industry_restricted_visa', label: 'I have a temporary visa with restrictions on industry (e.g. temporary activity visa 408)' },
-    { value: 'sponsorship_required', label: 'I require sponsorship to work for a new employer (e.g. 482, 457)' }
-  ];
 
-  function toggleAdvancedMode() {
-    isAdvancedMode = !isAdvancedMode;
-  }
-
-  function toggleSmartMatching() {
-    showSmartMatching = !showSmartMatching;
-  }
-
-  function toggleDeepSeek() {
-    showDeepSeek = !showDeepSeek;
-  }
-
-  function handleToggleKeydown(event: KeyboardEvent, toggleFunction: () => void) {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      toggleFunction();
-    }
-  }
 
   async function loadUploadedResumes() {
     const userEmail = (formData.email || '').trim();
@@ -137,11 +112,128 @@
     }
   }
 
-  function handleResumeSelection() {
+  async function handleResumeSelection() {
     if (formData.resumeFileName) {
       resumeFile = { name: formData.resumeFileName };
       resumeUploaded = true;
-      console.log('Resume selected:', formData.resumeFileName);
+      // Load the extracted text from the stored .txt file if not already available
+      if (!extractedResumeText) {
+        await loadExtractedTextForResume(formData.resumeFileName);
+      }
+    }
+  }
+
+  /**
+   * Reads the stored `.txt` companion file for a given resume binary,
+   * then parses it into structured data.
+   * Falls back to re-extracting from the binary if no .txt companion exists.
+   */
+  async function loadExtractedTextForResume(resumeFileName: string) {
+    const userEmail = (formData.email || '').trim();
+    if (!userEmail) return;
+    try {
+      const entries = await getManagedFiles({ userId: userEmail, feature: 'resume' });
+
+      // First try: find the stored .txt companion
+      const textFileName = resumeFileName.replace(/\.(pdf|docx?|doc)$/i, '.txt');
+      const textEntry = entries.find((e) => e.filename === textFileName);
+      if (textEntry) {
+        const text = await previewManagedFile(userEmail, textEntry.id, 200_000);
+        if (text && !text.startsWith('[Binary file:')) {
+          extractedResumeText = text;
+          try {
+            parsedResumeData = parseResumeText(text);
+            console.log('Parsed resume from stored text file:', parsedResumeData?.personalInfo?.fullName);
+          } catch (parseErr) {
+            console.error('Resume parsing failed (text loaded but not parsed):', parseErr);
+            parsedResumeData = null;
+          }
+          return;
+        }
+      }
+
+      // Fallback: re-extract from the binary file via the extract-document API
+      const binaryEntry = entries.find((e) => e.filename === resumeFileName);
+      if (!binaryEntry) {
+        console.warn(`No managed entry found for ${resumeFileName}`);
+        return;
+      }
+      console.log('No .txt companion found — re-extracting from binary:', resumeFileName);
+      const fullPath = await invoke<string>('get_managed_file_path', { input: { userId: userEmail, fileId: binaryEntry.id } });
+      const binaryContent = await invoke<string>('read_file_async', { filename: fullPath });
+      // read_file_async returns raw text; for true binary re-extraction we POST to the API
+      // Read binary as base64 via Tauri, then decode to Blob
+      if (!binaryContent) {
+        console.warn('Binary file was empty or unreadable');
+        return;
+      }
+      // The binary may be unreadable as UTF-8 text via read_file_async; use previewManagedFile as a last resort
+      const preview = await previewManagedFile(userEmail, binaryEntry.id, 500);
+      if (preview && preview.startsWith('[Binary file:')) {
+        // The file is a real binary — re-upload it through extract-document using fetch + blob
+        await reExtractBinaryResume(fullPath, resumeFileName, userEmail);
+      }
+    } catch (err) {
+      console.error('Could not load stored resume text:', err);
+    }
+  }
+
+  /**
+   * Re-extracts text from a binary resume on disk by reading it as base64
+   * and POSTing to /api/extract-document.
+   */
+  async function reExtractBinaryResume(filePath: string, fileName: string, userEmail: string) {
+    try {
+      // Read the file as base64 using Tauri
+      const base64 = await invoke<string>('read_file_base64', { filename: filePath });
+      if (!base64) return;
+
+      // Decode base64 to Uint8Array
+      const binaryStr = atob(base64);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+
+      const mimeType = fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf'
+        : fileName.toLowerCase().endsWith('.docx') ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        : 'application/msword';
+
+      const extractFormData = new FormData();
+      extractFormData.append('file', new Blob([bytes], { type: mimeType }), fileName);
+      const extractRes = await fetch(`${CORPUS_RAG_API}/api/extract-document`, {
+        method: 'POST',
+        body: extractFormData
+      });
+      const extractData = await extractRes.json().catch(() => ({}));
+      if (!extractRes.ok || extractData?.success !== true) {
+        console.warn('Re-extraction failed:', extractData?.error);
+        return;
+      }
+      const text = typeof extractData?.content === 'string' ? extractData.content : '';
+      if (!text.trim()) return;
+
+      extractedResumeText = text;
+      try {
+        parsedResumeData = parseResumeText(text);
+        console.log('Re-extracted + parsed resume:', parsedResumeData?.personalInfo?.fullName);
+      } catch { parsedResumeData = null; }
+
+      // Save the .txt companion for next time
+      const textFileName = fileName.replace(/\.(pdf|docx?|doc)$/i, '.txt');
+      try {
+        await registerManagedFile({
+          userId: userEmail,
+          feature: 'resume',
+          filename: textFileName,
+          content: text,
+          sourceRoute: '/frontend-form',
+          mimeType: 'text/plain',
+          tags: ['extracted-text', 'canonical']
+        });
+      } catch (saveErr) {
+        console.warn('Could not save .txt companion:', saveErr);
+      }
+    } catch (err) {
+      console.error('reExtractBinaryResume failed:', err);
     }
   }
 
@@ -156,17 +248,15 @@
       }
       const userEmail = (formData.email || '').trim();
       if (!userEmail) {
-        alert('Please add your Email in Profile & Contact before uploading resume.');
+        alert('Please add your Email in Basic Information before uploading resume.');
         if (target) target.value = '';
         return;
       }
       try {
         const fileName = String(file.name || 'resume.docx');
-
-        // Show uploading status
         uploadValidationMessage = 'Uploading and processing resume...';
 
-        // Step 1: Extract text content from the document
+        // Step 1: Extract text content
         const extractFormData = new FormData();
         extractFormData.append('file', file, fileName);
         const extractRes = await fetch(`${CORPUS_RAG_API}/api/extract-document`, {
@@ -179,8 +269,18 @@
         }
         const extractedContent = typeof extractData?.content === 'string' ? extractData.content : '';
         if (!extractedContent.trim()) throw new Error('Extracted resume text is empty');
-        
-        // Step 2: Read the file as ArrayBuffer and convert to base64
+
+        // Store the extracted text and parse it into structured fields
+        extractedResumeText = extractedContent;
+        try {
+          parsedResumeData = parseResumeText(extractedContent);
+          console.log('Parsed resume fields:', parsedResumeData?.personalInfo?.fullName);
+        } catch (parseErr) {
+          console.error('Resume parsing failed (upload will still succeed):', parseErr);
+          parsedResumeData = null;
+        }
+
+        // Step 2: Read file as base64
         const arrayBuffer = await file.arrayBuffer();
         const uint8Array = new Uint8Array(arrayBuffer);
         let binary = '';
@@ -188,8 +288,8 @@
           binary += String.fromCharCode(uint8Array[i]);
         }
         const base64Content = btoa(binary);
-        
-        // Step 3: Save the original binary file with extracted text as metadata
+
+        // Step 3: Save original binary file
         await registerManagedBinaryFile({
           userId: userEmail,
           feature: 'resume',
@@ -200,7 +300,7 @@
           tags: ['source-resume', 'canonical', 'binary-with-text']
         });
 
-        // Step 4: Also save extracted text separately for AI processing
+        // Step 4: Save extracted text separately
         const textFileName = fileName.replace(/\.(pdf|docx?|doc)$/i, '.txt');
         await registerManagedFile({
           userId: userEmail,
@@ -216,28 +316,17 @@
         resumeFile = { name: fileName };
         resumeUploaded = true;
 
-        // Reload the list of available resumes
         await loadUploadedResumes();
 
         uploadValidationMessage = `✓ Resume uploaded successfully: ${fileName}`;
-        
-        // Reset the file input
         if (target) target.value = '';
-        
-        // Clear success message after 5 seconds
-        setTimeout(() => {
-          uploadValidationMessage = '';
-        }, 5000);
+        setTimeout(() => { uploadValidationMessage = ''; }, 5000);
       } catch (error) {
         console.error('Failed to upload resume:', error);
         uploadValidationMessage = `✗ Failed to upload resume: ${error}`;
         alert('Failed to upload resume file: ' + error);
         if (target) target.value = '';
-        
-        // Clear error message after 5 seconds
-        setTimeout(() => {
-          uploadValidationMessage = '';
-        }, 5000);
+        setTimeout(() => { uploadValidationMessage = ''; }, 5000);
       }
     }
   }
@@ -245,11 +334,11 @@
   function resetForm() {
     formData = {
       fullName: '',
+      address: '',
       email: '',
       phone: '',
       linkedinUrl: '',
       keywords: '',
-      locations: '',
       minSalary: '',
       maxSalary: '',
       jobType: 'any',
@@ -257,30 +346,41 @@
       industry: '',
       listedDate: '',
       remotePreference: 'any',
-      rightToWork: 'citizen',
       rewriteResume: false,
       excludedCompanies: '',
       excludedKeywords: '',
-      skillWeight: '0.4',
-      locationWeight: '0.2',
-      salaryWeight: '0.3',
-      companyWeight: '0.1',
-      enableDeepSeek: false,
-      deepSeekApiKey: '',
       acceptTerms: false,
       resumeFileName: ''
     };
     resumeFile = null;
     resumeUploaded = false;
+    extractedResumeText = '';
+    parsedResumeData = null;
   }
 
   async function handleSubmit(event: SubmitEvent) {
     event.preventDefault();
-    
-    console.log('Form data at submit:', formData);
-    
-    if (!formData.keywords.trim()) {
-      alert('Keywords are required');
+
+    // Validate all required fields
+    const missing: string[] = [];
+
+    // Basic Information
+    if (!formData.fullName.trim())    missing.push('Full Name');
+    if (!formData.address.trim())     missing.push('Address');
+    if (!formData.phone.trim())       missing.push('Phone');
+    if (!formData.email.trim())       missing.push('Email');
+    if (!formData.linkedinUrl.trim()) missing.push('LinkedIn URL');
+    if (!formData.resumeFileName)     missing.push('Resume File');
+
+    // Job Preferences
+    if (!formData.keywords.trim())       missing.push('Keywords');
+    if (!formData.remotePreference)      missing.push('Remote Preference');
+    if (!String(formData.minSalary).trim()) missing.push('Minimum Salary');
+    if (!formData.jobType)               missing.push('Job Type');
+    if (!formData.experienceLevel)       missing.push('Experience Level');
+
+    if (missing.length > 0) {
+      alert(`Please fill in the following required fields:\n\n• ${missing.join('\n• ')}`);
       return;
     }
 
@@ -305,12 +405,9 @@
     uploadValidationMessage = `${syncResult.message} ${uploadValidation.message}`.trim();
 
     isSubmitting = true;
-    
     try {
-      console.log('Saving form data:', formData);
       const saved = await saveConfig();
       if (saved) {
-        console.log('Form submitted successfully:', formData);
         alert('Configuration saved successfully!');
       } else {
         throw new Error('Failed to save configuration');
@@ -323,71 +420,93 @@
     }
   }
 
-  function validateWeight(event: Event) {
-    const target = event.target as HTMLInputElement | null;
-    const value = parseFloat(target?.value || '0');
-    if (value < 0 || value > 1) {
-      if (target) target.value = String(Math.max(0, Math.min(1, value)));
-    }
-  }
-
   async function loadConfig() {
+    // Resolve the config path from Tauri
     try {
-      console.log('Loading config from project bots directory');
-      const configContent = await invoke<string>("read_file_async", { 
-        filename: "src/bots/user-bots-config.json" 
-      });
-      const config = JSON.parse(configContent);
-      if (config.formData) {
-        formData = { ...formData, ...config.formData };
-      }
-      await loadUploadedResumes();
-      if (formData.resumeFileName && availableResumeFiles.includes(formData.resumeFileName)) {
-        resumeFile = { name: formData.resumeFileName };
-        resumeUploaded = true;
-      } else if (availableResumeFiles.length > 0) {
-        formData.resumeFileName = availableResumeFiles[0];
-        resumeFile = { name: availableResumeFiles[0] };
-        resumeUploaded = true;
-      }
-      console.log('Config loaded from project file');
-    } catch (error) {
+      appConfigPath = await invoke<string>('get_app_config_path');
+    } catch {
+      appConfigPath = '';
+    }
+
+    let configLoaded = false;
+
+    // Try new user-data path first
+    if (appConfigPath) {
+      try {
+        const configContent = await invoke<string>('read_file_async', { filename: appConfigPath });
+        const config = JSON.parse(configContent);
+        if (config.formData) {
+          formData = { ...formData, ...config.formData };
+        }
+        // Support both new `rawText` key and old `content` key for migration
+        const storedResumeText = config.original_resume?.rawText || config.original_resume?.content || '';
+        if (storedResumeText) {
+          extractedResumeText = storedResumeText;
+        }
+        if (config.original_resume?.parsed) {
+          parsedResumeData = config.original_resume.parsed as ParsedResume;
+        }
+        // If we have text but no parsed data, re-parse now
+        if (extractedResumeText && !parsedResumeData) {
+          try { parsedResumeData = parseResumeText(extractedResumeText); } catch {}
+        }
+        configLoaded = true;
+        console.log('Config loaded from', appConfigPath);
+      } catch {}
+    }
+
+    // Fall back to old project-relative path for migration
+    if (!configLoaded) {
+      try {
+        const configContent = await invoke<string>('read_file_async', { filename: 'src/bots/user-bots-config.json' });
+        const config = JSON.parse(configContent);
+        if (config.formData) {
+          formData = { ...formData, ...config.formData };
+        }
+        configLoaded = true;
+        console.log('Config migrated from src/bots/user-bots-config.json');
+      } catch {}
+    }
+
+    if (!configLoaded) {
       console.log('No existing config found, using defaults');
-      await loadUploadedResumes();
-      if (availableResumeFiles.length > 0) {
-        formData.resumeFileName = availableResumeFiles[0];
-        resumeFile = { name: availableResumeFiles[0] };
-        resumeUploaded = true;
-      }
+    }
+
+    await loadUploadedResumes();
+    if (formData.resumeFileName && availableResumeFiles.includes(formData.resumeFileName)) {
+      resumeFile = { name: formData.resumeFileName };
+      resumeUploaded = true;
+    } else if (availableResumeFiles.length > 0) {
+      formData.resumeFileName = availableResumeFiles[0];
+      resumeFile = { name: availableResumeFiles[0] };
+      resumeUploaded = true;
+    }
+
+    // If a resume is selected but we still have no extracted text, load it from the stored .txt companion
+    if (formData.resumeFileName && !extractedResumeText) {
+      await loadExtractedTextForResume(formData.resumeFileName);
     }
   }
 
   async function saveConfig() {
     try {
-      console.log('Saving config to project bots directory');
-      
-      // First create the directory if it doesn't exist
-      await invoke<string>("create_directory_async", { 
-        dirname: "src/bots" 
-      }).catch(() => {}); // Ignore error if directory already exists
-      
-      let config;
-      try {
-        const configContent = await invoke<string>("read_file_async", { 
-          filename: "src/bots/user-bots-config.json" 
-        });
-        config = JSON.parse(configContent);
-      } catch {
-        config = { formData: {}, industries: [], workRightOptions: [] };
-      }
+      const config = {
+        formData: { ...formData },
+        original_resume: {
+          filename: formData.resumeFileName || '',
+          rawText: extractedResumeText,
+          parsed: parsedResumeData ?? null
+        },
+        general_questions: questionsData ?? null,
+        lastUpdated: new Date().toISOString()
+      };
 
-      config.formData = formData;
-      
-      await invoke<string>("write_file_async", { 
-        filename: "src/bots/user-bots-config.json",
+      const targetPath = appConfigPath || 'src/bots/user-bots-config.json';
+      await invoke<string>('write_file_async', {
+        filename: targetPath,
         content: JSON.stringify(config, null, 2)
       });
-      console.log('Config saved to project file');
+      console.log('Config saved to', targetPath);
       return true;
     } catch (error) {
       console.error('Error saving config:', error);
@@ -398,12 +517,8 @@
   async function validateUploadedResumeForCurrentUser(): Promise<{ success: boolean; message: string }> {
     const userEmail = (formData.email || '').trim();
     if (!userEmail) {
-      return {
-        success: false,
-        message: 'Please add your Email in Profile & Contact before saving configuration.'
-      };
+      return { success: false, message: 'Please add your Email in Basic Information before saving configuration.' };
     }
-
     try {
       const entries = await getManagedFiles({ userId: userEmail, feature: 'resume' });
       const fileNames = entries
@@ -411,64 +526,41 @@
         .filter((name): name is string => typeof name === 'string' && isSupportedResumeFile(name));
 
       if (fileNames.length === 0) {
-        return {
-          success: false,
-          message: `No canonical .doc/.docx/.pdf resume found for ${userEmail}. Please upload resume first.`
-        };
+        return { success: false, message: `No canonical .doc/.docx/.pdf resume found for ${userEmail}. Please upload resume first.` };
       }
 
       let selectedResumeName = '';
       if (formData.resumeFileName) {
         if (!fileNames.includes(formData.resumeFileName)) {
-          return {
-            success: false,
-            message: `Selected resume "${formData.resumeFileName}" was not found in canonical storage for ${userEmail}. Upload/select that same file first.`
-          };
+          return { success: false, message: `Selected resume "${formData.resumeFileName}" was not found in canonical storage for ${userEmail}. Upload/select that same file first.` };
         }
         selectedResumeName = formData.resumeFileName;
       } else {
-        selectedResumeName =
-          fileNames.find((name: string) => name.toLowerCase().includes('resume')) ||
-          fileNames[0];
+        selectedResumeName = fileNames.find((name: string) => name.toLowerCase().includes('resume')) || fileNames[0];
       }
 
       formData.resumeFileName = selectedResumeName;
       resumeFile = { name: selectedResumeName };
       resumeUploaded = true;
-      return {
-        success: true,
-        message: `Resume verified: ${selectedResumeName}`
-      };
+      return { success: true, message: `Resume verified: ${selectedResumeName}` };
     } catch (error) {
-      return {
-        success: false,
-        message: `Resume upload validation failed: ${error instanceof Error ? error.message : String(error)}`
-      };
+      return { success: false, message: `Resume upload validation failed: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
 
   async function syncSelectedResumeToCorpus(): Promise<{ success: boolean; message: string }> {
     const userEmail = (formData.email || '').trim();
     if (!userEmail) {
-      return {
-        success: false,
-        message: 'Please add your Email in Profile & Contact before saving configuration.'
-      };
+      return { success: false, message: 'Please add your Email in Basic Information before saving configuration.' };
     }
 
     const selectedResumeName = (formData.resumeFileName || '').trim();
     if (!selectedResumeName) {
-      return {
-        success: false,
-        message: 'Please select/upload a resume file before saving configuration.'
-      };
+      return { success: false, message: 'Please select/upload a resume file before saving configuration.' };
     }
 
     if (!isSupportedResumeFile(selectedResumeName)) {
-      return {
-        success: false,
-        message: 'Only .doc, .docx, and .pdf resumes are supported.'
-      };
+      return { success: false, message: 'Only .doc, .docx, and .pdf resumes are supported.' };
     }
 
     try {
@@ -478,43 +570,145 @@
         .filter((name): name is string => typeof name === 'string' && isSupportedResumeFile(name));
 
       if (!fileNames.includes(selectedResumeName)) {
-        return {
-          success: false,
-          message: `Selected resume "${selectedResumeName}" was not found in canonical storage for ${userEmail}. Please upload it first.`
-        };
+        return { success: false, message: `Selected resume "${selectedResumeName}" was not found in canonical storage for ${userEmail}. Please upload it first.` };
       }
-
-      return {
-        success: true,
-        message: `Resume available in canonical storage: ${selectedResumeName}`
-      };
+      return { success: true, message: `Resume available in canonical storage: ${selectedResumeName}` };
     } catch (error) {
-      return {
-        success: false,
-        message: `Resume sync to corpus failed: ${error instanceof Error ? error.message : String(error)}`
-      };
+      return { success: false, message: `Resume sync to corpus failed: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  // ── Q&A functions ──────────────────────────────────────────────────────────
+
+  async function loadQuestions() {
+    try {
+      questionsLoading = true;
+      const response = await fetch(API_URLS.GENERIC_QUESTIONS());
+      const result = await response.json();
+      if (result.success) {
+        questionsData = result.data;
+        const newEditing: typeof editingQuestions = {};
+        questionsData.questions.forEach((q: any) => {
+          newEditing[q.id] = {
+            keywords: q.match_keywords.join(', '),
+            answers: q.answer.join(', ')
+          };
+        });
+        editingQuestions = newEditing;
+      } else {
+        console.error('Failed to load Q&A:', result.error);
+      }
+    } catch (err) {
+      console.error('Failed to load Q&A:', err);
+    } finally {
+      questionsLoading = false;
+    }
+  }
+
+  async function saveQuestion(questionId: number | string) {
+    try {
+      questionsSaving = true;
+      const edited = editingQuestions[questionId];
+      const keywords = edited.keywords.split(',').map((k: string) => k.trim()).filter((k: string) => k);
+      const answers = edited.answers.split(',').map((a: string) => a.trim()).filter((a: string) => a);
+      const response = await fetch(`${API_URLS.GENERIC_QUESTIONS()}/${questionId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ match_keywords: keywords, answer: answers })
+      });
+      const result = await response.json();
+      if (result.success) {
+        await loadQuestions();
+      } else {
+        alert(`Failed to save: ${result.error}`);
+      }
+    } catch (err: any) {
+      alert(`Error saving: ${err.message}`);
+    } finally {
+      questionsSaving = false;
+    }
+  }
+
+  async function deleteQuestion(questionId: number | string) {
+    if (!confirm('Delete this question?')) return;
+    try {
+      questionsSaving = true;
+      const response = await fetch(`${API_URLS.GENERIC_QUESTIONS()}/${questionId}`, { method: 'DELETE' });
+      const result = await response.json();
+      if (result.success) {
+        await loadQuestions();
+      } else {
+        alert(`Failed to delete: ${result.error}`);
+      }
+    } catch (err: any) {
+      alert(`Error deleting: ${err.message}`);
+    } finally {
+      questionsSaving = false;
+    }
+  }
+
+  async function addNewQuestion() {
+    try {
+      questionsSaving = true;
+      const response = await fetch(API_URLS.GENERIC_QUESTIONS(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ match_keywords: [''], answer: [''] })
+      });
+      const result = await response.json();
+      if (result.success) {
+        await loadQuestions();
+      } else {
+        alert(`Failed to add: ${result.error}`);
+      }
+    } catch (err: any) {
+      alert(`Error adding: ${err.message}`);
+    } finally {
+      questionsSaving = false;
+    }
+  }
+
+  async function toggleAutoAnswer() {
+    if (!questionsData) return;
+    try {
+      questionsSaving = true;
+      const newValue = !questionsData.settings.autoAnswer;
+      const response = await fetch(API_URLS.GENERIC_QUESTIONS(), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'settings', settings: { autoAnswer: newValue } })
+      });
+      const result = await response.json();
+      if (result.success) {
+        questionsData.settings.autoAnswer = newValue;
+      } else {
+        alert(`Failed to update: ${result.error}`);
+      }
+    } catch (err: any) {
+      alert(`Error: ${err.message}`);
+    } finally {
+      questionsSaving = false;
     }
   }
 </script>
 
 <div class="container mx-auto p-6">
   <div class="max-w-4xl mx-auto">
-    <div class="flex justify-between items-center mb-8">
+    <div class="mb-8">
       <h1 class="text-4xl font-bold text-primary">⚙️ Configuration</h1>
-      <button type="button" class="btn btn-outline" onclick={toggleAdvancedMode}>
-        🔧 {isAdvancedMode ? 'Basic' : 'Advanced'}
-      </button>
     </div>
 
     <form onsubmit={handleSubmit} class="space-y-8">
-      <!-- Profile & Contact -->
+
+      <!-- Section 1: Basic Information -->
       <div class="card bg-base-100 shadow-xl">
         <div class="card-body">
-          <h2 class="card-title text-2xl mb-6">👤 Profile & Contact</h2>
+          <h2 class="card-title text-2xl mb-6">👤 Basic Information</h2>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div class="form-control">
               <label class="label" for="full-name-input">
                 <span class="label-text font-semibold">Full Name</span>
+                <span class="label-text-alt text-error">Required</span>
               </label>
               <input
                 id="full-name-input"
@@ -522,25 +716,29 @@
                 placeholder="Amit Chaulagain"
                 bind:value={formData.fullName}
                 class="input input-bordered w-full"
+                required
               />
             </div>
 
             <div class="form-control">
-              <label class="label" for="email-input">
-                <span class="label-text font-semibold">Email</span>
+              <label class="label" for="address-input">
+                <span class="label-text font-semibold">Address</span>
+                <span class="label-text-alt text-error">Required</span>
               </label>
               <input
-                id="email-input"
-                type="email"
-                placeholder="you@example.com"
-                bind:value={formData.email}
+                id="address-input"
+                type="text"
+                placeholder="123 Main St, Sydney NSW 2000"
+                bind:value={formData.address}
                 class="input input-bordered w-full"
+                required
               />
             </div>
 
             <div class="form-control">
               <label class="label" for="phone-input">
                 <span class="label-text font-semibold">Phone</span>
+                <span class="label-text-alt text-error">Required</span>
               </label>
               <input
                 id="phone-input"
@@ -548,12 +746,29 @@
                 placeholder="+61 4XX XXX XXX"
                 bind:value={formData.phone}
                 class="input input-bordered w-full"
+                required
               />
             </div>
 
             <div class="form-control">
+              <label class="label" for="email-input">
+                <span class="label-text font-semibold">Email</span>
+                <span class="label-text-alt text-error">Required</span>
+              </label>
+              <input
+                id="email-input"
+                type="email"
+                placeholder="you@example.com"
+                bind:value={formData.email}
+                class="input input-bordered w-full"
+                required
+              />
+            </div>
+
+            <div class="form-control md:col-span-2">
               <label class="label" for="linkedin-url-input">
                 <span class="label-text font-semibold">LinkedIn URL</span>
+                <span class="label-text-alt text-error">Required</span>
               </label>
               <input
                 id="linkedin-url-input"
@@ -561,18 +776,62 @@
                 placeholder="https://www.linkedin.com/in/your-profile"
                 bind:value={formData.linkedinUrl}
                 class="input input-bordered w-full"
+                required
               />
             </div>
+          </div>
+
+          <!-- Resume Upload -->
+          <div class="divider">Resume</div>
+          <div class="form-control">
+            <div class="label">
+              <span class="label-text font-semibold">Resume File</span>
+              <span class="label-text-alt text-error">Required — PDF, DOC, or DOCX</span>
+            </div>
+            {#if availableResumeFiles.length > 0}
+              <div class="mb-4">
+                <label for="resume-select" class="label">
+                  <span class="label-text">Select from uploaded resumes:</span>
+                </label>
+                <select
+                  id="resume-select"
+                  bind:value={formData.resumeFileName}
+                  onchange={handleResumeSelection}
+                  class="select select-bordered w-full"
+                >
+                  <option value="" disabled>Choose a resume</option>
+                  {#each availableResumeFiles as fileName}
+                    <option value={fileName}>{fileName}</option>
+                  {/each}
+                </select>
+                {#if formData.resumeFileName}
+                  <div class="mt-2 text-success text-sm">✓ Selected: {formData.resumeFileName}</div>
+                {/if}
+              </div>
+              <div class="text-center opacity-60 mb-2">— OR —</div>
+            {/if}
+            <input
+              type="file"
+              accept=".pdf,.doc,.docx"
+              id="resume-upload"
+              class="file-input file-input-bordered w-full"
+              onchange={handleResumeUpload}
+            />
+            {#if uploadValidationMessage}
+              <div class="mt-2 p-2 rounded text-sm {uploadValidationMessage.includes('✓') ? 'bg-success/10 text-success border border-success/30' : uploadValidationMessage.includes('✗') ? 'bg-error/10 text-error border border-error/30' : 'bg-info/10 text-info border border-info/30'}">
+                {uploadValidationMessage}
+              </div>
+            {/if}
           </div>
         </div>
       </div>
 
-      <!-- Job Preferences -->
+      <!-- Section 2: Job Preferences -->
       <div class="card bg-base-100 shadow-xl">
         <div class="card-body">
           <h2 class="card-title text-2xl mb-6">🎯 Job Preferences</h2>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div class="form-control">
+            <div class="form-control md:col-span-2">
               <label class="label" for="keywords-input">
                 <span class="label-text font-semibold">Keywords (comma separated)</span>
                 <span class="label-text-alt text-error">Required</span>
@@ -588,21 +847,22 @@
             </div>
 
             <div class="form-control">
-              <label class="label" for="locations-input">
-                <span class="label-text font-semibold">Locations (comma separated)</span>
+              <label class="label" for="remote-preference-select">
+                <span class="label-text font-semibold">Remote Preference</span>
+                <span class="label-text-alt text-error">Required</span>
               </label>
-              <input
-                id="locations-input"
-                type="text"
-                placeholder="Sydney, Melbourne, Remote"
-                bind:value={formData.locations}
-                class="input input-bordered w-full"
-              />
+              <select id="remote-preference-select" bind:value={formData.remotePreference} class="select select-bordered w-full">
+                <option value="any">Any</option>
+                <option value="remote">Remote</option>
+                <option value="hybrid">Hybrid</option>
+                <option value="on-site">On-site</option>
+              </select>
             </div>
 
             <div class="form-control">
               <label class="label" for="min-salary-input">
                 <span class="label-text font-semibold">Minimum Salary (AUD)</span>
+                <span class="label-text-alt text-error">Required</span>
               </label>
               <input
                 id="min-salary-input"
@@ -630,7 +890,8 @@
 
             <div class="form-control">
               <label class="label" for="job-type-select">
-                <span class="label-text font-semibold">Job Types</span>
+                <span class="label-text font-semibold">Job Type</span>
+                <span class="label-text-alt text-error">Required</span>
               </label>
               <select id="job-type-select" bind:value={formData.jobType} class="select select-bordered w-full">
                 <option value="any">Any</option>
@@ -643,7 +904,8 @@
 
             <div class="form-control">
               <label class="label" for="experience-level-select">
-                <span class="label-text font-semibold">Experience Levels</span>
+                <span class="label-text font-semibold">Experience Level</span>
+                <span class="label-text-alt text-error">Required</span>
               </label>
               <select id="experience-level-select" bind:value={formData.experienceLevel} class="select select-bordered w-full">
                 <option value="any">Any</option>
@@ -657,7 +919,7 @@
 
             <div class="form-control">
               <label class="label" for="industry-select">
-                <span class="label-text font-semibold">Industries</span>
+                <span class="label-text font-semibold">Industry</span>
               </label>
               <select id="industry-select" bind:value={formData.industry} class="select select-bordered w-full">
                 {#each industries as industry}
@@ -682,268 +944,147 @@
             </div>
 
             <div class="form-control">
-              <label class="label" for="remote-preference-select">
-                <span class="label-text font-semibold">Remote Preference</span>
+              <label class="label" for="excluded-companies-input">
+                <span class="label-text font-semibold">Excluded Companies (comma separated)</span>
               </label>
-              <select id="remote-preference-select" bind:value={formData.remotePreference} class="select select-bordered w-full">
-                <option value="any">Any</option>
-                <option value="remote">Remote</option>
-                <option value="hybrid">Hybrid</option>
-                <option value="on-site">On-site</option>
-              </select>
+              <input
+                id="excluded-companies-input"
+                type="text"
+                placeholder="wipro, infosys, tcs"
+                bind:value={formData.excludedCompanies}
+                class="input input-bordered w-full"
+              />
             </div>
-          </div>
-        </div>
-      </div>
 
-      <!-- Work Rights -->
-      <div class="form-section">
-        <div class="section-header">🏛️ Work Rights</div>
-        <div class="section-content">
-          <div class="work-rights-group">
-            <div class="work-rights-label">
-              Which of the following statements best describes your right to work in Australia?
+            <div class="form-control">
+              <label class="label" for="excluded-keywords-input">
+                <span class="label-text font-semibold">Excluded Keywords</span>
+              </label>
+              <input
+                id="excluded-keywords-input"
+                type="text"
+                placeholder="junior, intern, php"
+                bind:value={formData.excludedKeywords}
+                class="input input-bordered w-full"
+              />
             </div>
-            <div class="work-rights-select-wrapper">
-              <select bind:value={formData.rightToWork} class="form-select work-rights-select" name="right_to_work_in_aus">
-                {#each workRightOptions as option}
-                  <option value={option.value}>{option.label}</option>
-                {/each}
-              </select>
-            </div>
-          </div>
-        </div>
-      </div>
 
-      <!-- Application Settings -->
-      <div class="form-section">
-        <div class="section-header">🤖 Application Settings</div>
-        <div class="section-content">
-          <div class="form-grid">
-            <div class="form-group checkbox-group">
-              <label class="checkbox-label">
-                <span class="checkbox-text">Rewrite resume for each Job?</span>
-                <input type="checkbox" bind:checked={formData.rewriteResume} class="checkbox-input" />
-                <span class="checkmark"></span>
+            <div class="form-control md:col-span-2">
+              <label class="label cursor-pointer justify-start gap-4">
+                <input type="checkbox" bind:checked={formData.rewriteResume} class="checkbox checkbox-primary" />
+                <span class="label-text font-semibold">Rewrite resume for each job?</span>
               </label>
             </div>
-
-            <div class="form-group">
-              <div class="form-label">
-                <span class="label-text">Resume Upload</span>
-                <span class="helper-text">PDF format recommended</span>
-                <div class="text-sm opacity-80 mt-1">
-                  Migration update: only `.doc`, `.docx`, and `.pdf` are supported. `.txt` is no longer allowed.
-                </div>
-                
-                {#if availableResumeFiles.length > 0}
-                  <div style="margin-bottom: 16px;">
-                    <label for="resume-select" class="form-label" style="display: block; margin-bottom: 8px;">
-                      <span class="label-text">Select from uploaded resumes:</span>
-                    </label>
-                    <select 
-                      id="resume-select" 
-                      bind:value={formData.resumeFileName} 
-                      onchange={handleResumeSelection}
-                      class="select select-bordered w-full"
-                      style="max-width: 100%;"
-                    >
-                      <option value="" disabled>Choose a resume</option>
-                      {#each availableResumeFiles as fileName}
-                        <option value={fileName}>{fileName}</option>
-                      {/each}
-                    </select>
-                    {#if formData.resumeFileName}
-                      <div class="file-upload-status" style="margin-top: 8px;">
-                        <span class="upload-success">✓ Selected: {formData.resumeFileName}</span>
-                      </div>
-                    {/if}
-                  </div>
-                  <div style="text-align: center; margin: 12px 0; opacity: 0.6;">— OR —</div>
-                {/if}
-                
-                <div class="file-upload-wrapper">
-                  <input
-                    type="file"
-                    accept=".pdf,.doc,.docx"
-                    id="resume-upload"
-                    class="file-input"
-                    onchange={handleResumeUpload}
-                  />
-                  <label for="resume-upload" class="file-upload-label">
-                    {availableResumeFiles.length > 0 ? 'Upload New Resume' : 'Choose File'}
-                  </label>
-                  {#if uploadValidationMessage}
-                    <div style="margin-top: 8px; padding: 8px; border-radius: 4px; font-size: 0.9rem; {uploadValidationMessage.includes('✓') ? 'background: rgba(40, 167, 69, 0.1); color: #28a745; border: 1px solid rgba(40, 167, 69, 0.3);' : uploadValidationMessage.includes('✗') ? 'background: rgba(220, 53, 69, 0.1); color: #dc3545; border: 1px solid rgba(220, 53, 69, 0.3);' : 'background: rgba(0, 123, 255, 0.1); color: #007bff; border: 1px solid rgba(0, 123, 255, 0.3);'}">
-                      {uploadValidationMessage}
-                    </div>
-                  {/if}
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </div>
 
-      <!-- Filters & Quality Control -->
-      <div class="form-section">
-        <div class="section-header">🎯 Quality Filters</div>
-        <div class="section-content">
-          <div class="form-grid">
-            <div class="form-group">
-              <label class="form-label">
-                <span class="label-text">Excluded Companies (comma separated)</span>
+      <!-- Section 3: General Q&A -->
+      <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+          <h2 class="card-title text-2xl mb-2">💬 General Q&A</h2>
+          <p class="text-sm opacity-70 mb-4">
+            Define keyword-based auto-answers for common application questions. Changes save automatically on blur.
+          </p>
+
+          {#if questionsLoading}
+            <div class="flex items-center justify-center py-8">
+              <span class="loading loading-spinner loading-md text-primary"></span>
+            </div>
+          {:else if !questionsData}
+            <div class="alert alert-warning">
+              <span>Could not load Q&A data. Make sure the server is running.</span>
+              <button class="btn btn-sm" onclick={loadQuestions}>Retry</button>
+            </div>
+          {:else}
+            <!-- Controls row -->
+            <div class="flex flex-col sm:flex-row gap-3 items-center justify-between mb-4">
+              <div class="flex items-center gap-3">
+                <span class="text-sm font-medium">Smart auto-answer:</span>
                 <input
-                  type="text"
-                  placeholder="wipro, infosys, tcs"
-                  bind:value={formData.excludedCompanies}
-                  class="form-input"
+                  type="checkbox"
+                  class="toggle toggle-success"
+                  checked={questionsData.settings.autoAnswer}
+                  onchange={toggleAutoAnswer}
+                  disabled={questionsSaving}
                 />
-              </label>
+                <span class="text-xs {questionsData.settings.autoAnswer ? 'text-success' : 'opacity-50'}">
+                  {questionsData.settings.autoAnswer ? 'ON' : 'OFF'}
+                </span>
+              </div>
+              <button
+                type="button"
+                class="btn btn-primary btn-sm gap-2"
+                onclick={addNewQuestion}
+                disabled={questionsSaving}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                </svg>
+                Add Question
+              </button>
             </div>
 
-            <div class="form-group">
-              <label class="form-label">
-                <span class="label-text">Excluded Keywords</span>
-                <input 
-                  type="text" 
-                  placeholder="junior, intern, php" 
-                  bind:value={formData.excludedKeywords}
-                  class="form-input"
-                />
-              </label>
-            </div>
-          </div>
+            <!-- Questions list -->
+            {#if questionsData.questions.length === 0}
+              <div class="text-center py-6 opacity-50 text-sm">
+                No questions yet. Click "Add Question" to create one.
+              </div>
+            {:else}
+              <div class="space-y-3">
+                {#each questionsData.questions as question (question.id)}
+                  <div class="card bg-base-200 border border-base-300">
+                    <div class="card-body p-4">
+                      <div class="flex items-center gap-2 mb-3">
+                        <div class="badge badge-neutral">#{question.id}</div>
+                        <button
+                          type="button"
+                          class="btn btn-ghost btn-xs ml-auto"
+                          onclick={() => deleteQuestion(question.id)}
+                          disabled={questionsSaving}
+                          aria-label="Delete question"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                      <div class="grid grid-cols-1 gap-3">
+                        <div class="form-control">
+                          <label class="label py-1" for={`qa-keywords-${question.id}`}>
+                            <span class="label-text font-medium">🔍 Match questions containing</span>
+                          </label>
+                          <input
+                            id={`qa-keywords-${question.id}`}
+                            type="text"
+                            class="input input-bordered input-sm w-full"
+                            placeholder="right to work, work authorization, visa status"
+                            bind:value={editingQuestions[question.id].keywords}
+                            onblur={() => saveQuestion(question.id)}
+                          />
+                        </div>
+                        <div class="form-control">
+                          <label class="label py-1" for={`qa-answers-${question.id}`}>
+                            <span class="label-text font-medium">✅ Answer with</span>
+                          </label>
+                          <input
+                            id={`qa-answers-${question.id}`}
+                            type="text"
+                            class="input input-bordered input-sm w-full"
+                            placeholder="Australian citizen, Yes, I have work rights"
+                            bind:value={editingQuestions[question.id].answers}
+                            onblur={() => saveQuestion(question.id)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          {/if}
         </div>
       </div>
-
-      <!-- Smart Matching (Advanced) -->
-      {#if isAdvancedMode}
-        <div class="form-section collapsible">
-          <div 
-            class="section-header-collapsible" 
-            role="button" 
-            tabindex="0"
-            onclick={toggleSmartMatching}
-            onkeydown={(event) => handleToggleKeydown(event, toggleSmartMatching)}
-          >
-            <input type="checkbox" checked={showSmartMatching} readonly />
-            <span class="section-title">🧠 Smart Matching Weights</span>
-          </div>
-          {#if showSmartMatching}
-            <div class="section-content">
-              <div class="form-grid">
-                <div class="form-group">
-                  <label class="form-label">
-                    <span class="label-text">Skill Weight</span>
-                    <span class="helper-text">0.0 - 1.0</span>
-                    <input 
-                      type="number" 
-                      min="0" 
-                      max="1" 
-                      step="0.1" 
-                      placeholder="0.4" 
-                      bind:value={formData.skillWeight}
-                      onblur={validateWeight}
-                      class="form-input"
-                    />
-                  </label>
-                </div>
-
-                <div class="form-group">
-                  <label class="form-label">
-                    <span class="label-text">Location Weight</span>
-                    <span class="helper-text">0.0 - 1.0</span>
-                    <input 
-                      type="number" 
-                      min="0" 
-                      max="1" 
-                      step="0.1" 
-                      placeholder="0.2" 
-                      bind:value={formData.locationWeight}
-                      onblur={validateWeight}
-                      class="form-input"
-                    />
-                  </label>
-                </div>
-
-                <div class="form-group">
-                  <label class="form-label">
-                    <span class="label-text">Salary Weight</span>
-                    <span class="helper-text">0.0 - 1.0</span>
-                    <input 
-                      type="number" 
-                      min="0" 
-                      max="1" 
-                      step="0.1" 
-                      placeholder="0.3" 
-                      bind:value={formData.salaryWeight}
-                      onblur={validateWeight}
-                      class="form-input"
-                    />
-                  </label>
-                </div>
-
-                <div class="form-group">
-                  <label class="form-label">
-                    <span class="label-text">Company Weight</span>
-                    <span class="helper-text">0.0 - 1.0</span>
-                    <input 
-                      type="number" 
-                      min="0" 
-                      max="1" 
-                      step="0.1" 
-                      placeholder="0.1" 
-                      bind:value={formData.companyWeight}
-                      onblur={validateWeight}
-                      class="form-input"
-                    />
-                  </label>
-                </div>
-              </div>
-            </div>
-          {/if}
-        </div>
-
-        <!-- DeepSeek API (Advanced) -->
-        <div class="form-section collapsible">
-          <div 
-            class="section-header-collapsible" 
-            role="button" 
-            tabindex="0"
-            onclick={toggleDeepSeek}
-            onkeydown={(event) => handleToggleKeydown(event, toggleDeepSeek)}
-          >
-            <input type="checkbox" checked={showDeepSeek} readonly />
-            <span class="section-title">🤖 DeepSeek AI Integration</span>
-          </div>
-          {#if showDeepSeek}
-            <div class="section-content">
-              <div class="form-grid">
-                <div class="form-group checkbox-group">
-                  <label class="checkbox-label">
-                    <span class="checkbox-text">Enable DeepSeek</span>
-                    <input type="checkbox" bind:checked={formData.enableDeepSeek} class="checkbox-input" />
-                    <span class="checkmark"></span>
-                  </label>
-                </div>
-
-                <div class="form-group">
-                  <label class="form-label">
-                    <span class="label-text">API Key</span>
-                    <input 
-                      type="password" 
-                      placeholder="sk-..." 
-                      bind:value={formData.deepSeekApiKey}
-                      class="form-input"
-                    />
-                  </label>
-                </div>
-              </div>
-            </div>
-          {/if}
-        </div>
-      {/if}
 
       <!-- Legal Agreement -->
       <div class="form-section legal-section">
@@ -953,7 +1094,6 @@
             Using this bot may violate Seek's Terms of Service. You assume all responsibility.
           </div>
         </div>
-
         <div class="legal-agreement">
           <label class="checkbox-label legal-checkbox">
             <span class="checkbox-text">I understand and accept</span>
@@ -963,7 +1103,7 @@
         </div>
       </div>
 
-      <!-- Submit Button -->
+      <!-- Submit Buttons -->
       <div class="form-actions" style="display: flex; gap: var(--space-xl); justify-content: center; margin-top: var(--space-2xl); flex-wrap: wrap;">
         <button type="submit" class="btn btn--primary btn--large" disabled={isSubmitting}>
           {#if isSubmitting}
@@ -984,4 +1124,3 @@
     </form>
   </div>
 </div>
-

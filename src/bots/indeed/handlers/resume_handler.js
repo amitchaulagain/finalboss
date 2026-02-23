@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { Document, Paragraph, TextRun, Packer } from 'docx';
 import PDFDocument from 'pdfkit';
-import { readCanonicalResumeText } from '../../../lib/canonical-resume';
+import { resolveCanonicalResumePath } from '../../../lib/canonical-resume';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,6 +12,23 @@ const __dirname = path.dirname(__filename);
 const printLog = (message) => {
   console.log(message);
 };
+
+/** @param {string} text */
+function stripMarkdown(text) {
+  return text
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*(.+?)\*\*/gs, '$1')
+    .replace(/__(.+?)__/gs, '$1')
+    .replace(/\*(.+?)\*/gs, '$1')
+    .replace(/(?<!\w)_(.+?)_(?!\w)/gs, '$1')
+    .replace(/`(.+?)`/g, '$1')
+    .replace(/\[(.+?)\]\(.+?\)/g, '$1')
+    .replace(/^>\s+/gm, '')
+    .replace(/^[-*_]{3,}\s*$/gm, '')
+    .replace(/^[ \t]*[-*+]\s+/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
 async function createResumeFile(resumeText, jobId) {
   const jobDir = path.join(__dirname, '../../jobs', jobId);
@@ -59,9 +76,43 @@ async function resolveResumeText(ctx) {
     throw new Error('Missing user email. Canonical resume lookup requires email in config.');
   }
   const preferredResumeFileName = String(ctx?.config?.formData?.resumeFileName || '').trim();
-  const resume = readCanonicalResumeText(userEmail, preferredResumeFileName);
-  printLog(`📄 Using canonical resume: ${resume.filename}`);
-  return resume.content;
+
+  // Resolve the actual file path (PDF/DOCX — binary, cannot be read as UTF-8 directly)
+  const { filename, filePath } = resolveCanonicalResumePath(userEmail, preferredResumeFileName);
+  printLog(`📄 Extracting text from canonical resume: ${filename}`);
+
+  // POST the binary file to /api/upload to get properly extracted plain text
+  const { getBearerHeader } = await import('../../core/api_client.js');
+  const baseUrl = process.env.API_BASE || 'http://localhost:3000';
+  const binary = fs.readFileSync(filePath);
+  const ext = path.extname(filename).toLowerCase();
+  const mimeMap = {
+    '.pdf': 'application/pdf',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.doc': 'application/msword'
+  };
+  const mimeType = mimeMap[ext] || 'application/octet-stream';
+  const formData = new FormData();
+  formData.append('userId', userEmail);
+  formData.append('file', new Blob([binary], { type: mimeType }), filename);
+
+  const authHeader = await getBearerHeader();
+  const response = await fetch(`${baseUrl}/api/upload`, {
+    method: 'POST',
+    headers: { Authorization: authHeader },
+    body: formData
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to extract resume text via /api/upload: HTTP ${response.status}`);
+  }
+  const data = await response.json();
+  const content = typeof data?.content === 'string' ? data.content.trim() : '';
+  if (!content) {
+    throw new Error(`Resume text extraction returned empty content for ${filename}`);
+  }
+  printLog(`📄 Extracted ${content.length} chars from ${filename}`);
+  return content;
 }
 
 async function generateAIResume(ctx) {
@@ -92,11 +143,20 @@ async function generateAIResume(ctx) {
     job_title: jobData.title || '',
     company: jobData.company || '',
 
-    // Custom prompt for better AI results
-    prompt: `Tailor this resume for the Indeed job posting.
-Optimize for ATS (Applicant Tracking Systems) by including relevant keywords from the job description.
-Highlight experience and skills that directly match the job requirements.
-Keep formatting clean and professional. Focus on quantifiable achievements.`
+    // Embed the actual resume text directly in the prompt so the AI cannot ignore it
+    prompt: `You are a resume enhancement specialist.
+
+--- CANDIDATE'S ACTUAL RESUME (this is the ONLY source of truth) ---
+${resumeText}
+--- END OF RESUME ---
+
+ABSOLUTE RULES — violation of any of these is not acceptable:
+1. Copy the candidate's full name, address, phone, email, and all contact details EXACTLY as they appear above. Do not alter, replace, or omit any of them.
+2. Copy every job title, employer name, employment date, education institution, degree, and graduation date EXACTLY as they appear above. Do not change or invent any of these.
+3. Do NOT invent, add, or infer any experience, skill, achievement, project, or qualification that is not in the resume above.
+4. Your ONLY permitted actions are: reorder sections, rephrase existing descriptions using stronger action verbs, and weave in relevant keywords from the job description.
+
+Tailor this resume for the Indeed job posting. Optimize for ATS by including relevant keywords from the job description. Highlight experience and skills that directly match the job requirements.`
   };
 
   const jobDir = path.join(__dirname, '../../jobs', jobId);
@@ -120,8 +180,9 @@ Keep formatting clean and professional. Focus on quantifiable achievements.`
 
   if (data.resume) {
     printLog("✅ AI resume generated");
-    printLog(`📄 Length: ${data.resume.length} chars`);
-    return data.resume;
+    const resume = stripMarkdown(data.resume);
+    printLog(`📄 Length: ${resume.length} chars`);
+    return resume;
   } else {
     throw new Error('No resume field returned from API');
   }

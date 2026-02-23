@@ -40,6 +40,8 @@ export interface JobApplicationPayload {
   application: {
     coverLetter?: string;
     tailoredResume?: string;
+    resumeSource?: 'ai-enhanced' | 'original';
+    resumePdfPath?: string;
     questionAnswers?: Array<{
       question: string;
       answer: string;
@@ -199,23 +201,36 @@ function readQuestionAnswers(jobDirs: string[]): Array<{
 }
 
 /**
- * Prefer resume text over path reference for analytics readability.
+ * Read resume data and detect whether it was AI-enhanced or the user's original.
+ * AI-enhanced: resume_response.json exists with a generated resume field.
+ * Original: only the canonical resume file was used directly (no AI generation).
  */
-function readTailoredResume(jobDirs: string[]): string | undefined {
+function readTailoredResume(jobDirs: string[]): {
+  text?: string;
+  resumeSource: 'ai-enhanced' | 'original';
+  resumePdfPath?: string;
+} {
   const response = readJsonFromDirs(jobDirs, 'resume_response.json');
   if (response && typeof response === 'object') {
     const fromApi = response.resume ?? response.generatedText ?? response.tailoredResume;
     if (typeof fromApi === 'string' && fromApi.trim()) {
-      return fromApi.trim();
+      // Find the PDF saved alongside the AI-generated resume
+      let resumePdfPath: string | undefined;
+      for (const dir of jobDirs) {
+        const pdf = path.join(dir, 'resume.pdf');
+        if (fs.existsSync(pdf)) { resumePdfPath = pdf; break; }
+      }
+      return { text: fromApi.trim(), resumeSource: 'ai-enhanced', resumePdfPath };
     }
   }
+  // No AI response — original resume was uploaded directly
   for (const dir of jobDirs) {
     const docx = path.join(dir, 'resume.docx');
-    if (fs.existsSync(docx)) return docx;
+    if (fs.existsSync(docx)) return { text: docx, resumeSource: 'original' };
     const pdf = path.join(dir, 'resume.pdf');
-    if (fs.existsSync(pdf)) return pdf;
+    if (fs.existsSync(pdf)) return { text: pdf, resumeSource: 'original' };
   }
-  return undefined;
+  return { resumeSource: 'original' };
 }
 
 /**
@@ -290,7 +305,7 @@ export function buildJobApplicationPayload(input: RecordJobApplicationInput): Jo
   const candidateJobDirs = getCandidateJobDirs(jobDirPath, platform, platformJobId);
   const coverLetter = readCoverLetter(candidateJobDirs);
   const questionAnswers = readQuestionAnswers(candidateJobDirs);
-  const tailoredResume = readTailoredResume(candidateJobDirs);
+  const { text: tailoredResume, resumeSource, resumePdfPath } = readTailoredResume(candidateJobDirs);
   const apiCalls = readApiCallsFromJobDir(candidateJobDirs);
 
   // Extra job fields for Job details tab (posted, category, application_volume, etc.)
@@ -319,6 +334,8 @@ export function buildJobApplicationPayload(input: RecordJobApplicationInput): Jo
     application: {
       coverLetter,
       tailoredResume,
+      resumeSource,
+      ...(resumePdfPath ? { resumePdfPath } : {}),
       questionAnswers,
       ...(apiCalls.length > 0 ? { apiCalls } : {})
     },

@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
-import { readCanonicalResumeText } from '../../../lib/canonical-resume';
+import { resolveCanonicalResumePath } from '../../../lib/canonical-resume';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,6 +11,23 @@ const printLog = (message) => {
   console.log(message);
 };
 
+/** @param {string} text */
+function stripMarkdown(text) {
+  return text
+    .replace(/^#{1,6}\s+/gm, '')           // headings
+    .replace(/\*\*(.+?)\*\*/gs, '$1')      // bold **
+    .replace(/__(.+?)__/gs, '$1')           // bold __
+    .replace(/\*(.+?)\*/gs, '$1')           // italic *
+    .replace(/(?<!\w)_(.+?)_(?!\w)/gs, '$1') // italic _
+    .replace(/`(.+?)`/g, '$1')             // inline code
+    .replace(/\[(.+?)\]\(.+?\)/g, '$1')    // links
+    .replace(/^>\s+/gm, '')                // blockquotes
+    .replace(/^[-*_]{3,}\s*$/gm, '')       // horizontal rules
+    .replace(/^[ \t]*[-*+]\s+/gm, '')      // bullet list markers
+    .replace(/\n{3,}/g, '\n\n')            // collapse excess blank lines
+    .trim();
+}
+
 /** @param {any} ctx */
 async function resolveResumeText(ctx) {
   const userEmail = String(ctx?.config?.formData?.email || '').trim();
@@ -18,9 +35,34 @@ async function resolveResumeText(ctx) {
     throw new Error('Missing user email. Canonical resume lookup requires email in config.');
   }
   const preferredResumeFileName = String(ctx?.config?.formData?.resumeFileName || '').trim();
-  const resume = readCanonicalResumeText(userEmail, preferredResumeFileName);
-  printLog(`📄 Using canonical resume: ${resume.filename}`);
-  return resume.content;
+
+  const { filename, filePath } = resolveCanonicalResumePath(userEmail, preferredResumeFileName);
+  printLog(`📄 Extracting text from canonical resume: ${filename}`);
+
+  const { getBearerHeader } = await import('../../core/api_client.js');
+  const baseUrl = process.env.API_BASE || 'http://localhost:3000';
+  const binary = fs.readFileSync(filePath);
+  const ext = path.extname(filename).toLowerCase();
+  const mimeMap = {
+    '.pdf': 'application/pdf',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.doc': 'application/msword'
+  };
+  const formData = new FormData();
+  formData.append('userId', userEmail);
+  formData.append('file', new Blob([binary], { type: mimeMap[ext] || 'application/octet-stream' }), filename);
+
+  const response = await fetch(`${baseUrl}/api/upload`, {
+    method: 'POST',
+    headers: { Authorization: await getBearerHeader() },
+    body: formData
+  });
+  if (!response.ok) throw new Error(`Failed to extract resume text via /api/upload: HTTP ${response.status}`);
+  const data = await response.json();
+  const content = typeof data?.content === 'string' ? data.content.trim() : '';
+  if (!content) throw new Error(`Resume text extraction returned empty content for ${filename}`);
+  printLog(`📄 Extracted ${content.length} chars from ${filename}`);
+  return content;
 }
 
 /** @param {any} ctx */
@@ -54,6 +96,13 @@ async function generateAICoverLetter(ctx) {
 
     // Custom prompt for better AI results
     prompt: `Write a compelling, professional cover letter for this Indeed job posting.
+
+STRICT RULES — these override everything else:
+- NEVER invent, fabricate, or modify any factual information
+- Only reference experiences, skills, and achievements that are explicitly stated in the provided resume
+- Do NOT fabricate projects, companies, dates, or accomplishments
+- Do NOT include a LinkedIn URL or any other URL anywhere in the letter
+
 Highlight relevant experience and skills that match the job requirements.
 Keep it concise (300-400 words) and personalized to ${jobData.company || 'the company'}.
 Focus on demonstrating value and enthusiasm for the role.`
@@ -93,8 +142,9 @@ Focus on demonstrating value and enthusiasm for the role.`
 
   if (data.cover_letter) {
     printLog("✅ AI cover letter generated");
-    printLog(`📄 Length: ${data.cover_letter.length} chars`);
-    return data.cover_letter;
+    const coverLetter = stripMarkdown(data.cover_letter);
+    printLog(`📄 Length: ${coverLetter.length} chars`);
+    return coverLetter;
   } else {
     printLog(`❌ API response missing cover_letter field. Response: ${JSON.stringify(data)}`);
     throw new Error('No cover_letter field returned from API');

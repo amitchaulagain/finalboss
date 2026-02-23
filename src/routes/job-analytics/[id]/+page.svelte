@@ -5,6 +5,7 @@
   import { goto } from '$app/navigation';
   import { authService } from '$lib/authService.js';
   import { tokenService } from '$lib/services/tokenService.js';
+  import { invoke } from '@tauri-apps/api/core';
 
   const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3000';
 
@@ -72,6 +73,68 @@
     if (!d) return '—';
     const date = typeof d === 'string' ? new Date(d) : d;
     return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  }
+
+  /** @param {string} text */
+  function stripMarkdown(text) {
+    return text
+      .replace(/^#{1,6}\s+/gm, '')
+      .replace(/\*\*(.+?)\*\*/gs, '$1')
+      .replace(/__(.+?)__/gs, '$1')
+      .replace(/\*(.+?)\*/gs, '$1')
+      .replace(/(?<!\w)_(.+?)_(?!\w)/gs, '$1')
+      .replace(/`(.+?)`/g, '$1')
+      .replace(/\[(.+?)\]\(.+?\)/g, '$1')
+      .replace(/^>\s+/gm, '')
+      .replace(/^[-*_]{3,}\s*$/gm, '')
+      .replace(/^[ \t]*[-*+]\s+/gm, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  /**
+   * Determine resume source. Uses stored field if available, otherwise infers from
+   * whether tailoredResume is inline text (AI-enhanced) or a file path / absent (original).
+   * @param {any} application
+   * @returns {'ai-enhanced' | 'original' | null}
+   */
+  function getResumeSource(application) {
+    if (!application) return null;
+    if (application.resumeSource) return application.resumeSource;
+    const r = application.tailoredResume;
+    if (!r) return 'original';
+    // File paths won't contain newlines; inline AI text almost always will
+    return r.includes('\n') ? 'ai-enhanced' : 'original';
+  }
+
+  /**
+   * Get PDF path for the saved AI-enhanced resume.
+   * Prefers the stored field, falls back to jobDir + resume.pdf.
+   * @param {any} app
+   * @returns {string | null}
+   */
+  function getResumePdfPath(app) {
+    if (app?.application?.resumePdfPath) return app.application.resumePdfPath;
+    const jobDir = app?.rawData?.source?.jobDir ?? app?.source?.jobDir;
+    if (jobDir) return jobDir + '/resume.pdf';
+    return null;
+  }
+
+  /** Returns just `jobId/resume.pdf` for display. */
+  function shortPdfPath(fullPath) {
+    if (!fullPath) return '';
+    const parts = fullPath.replace(/\\/g, '/').split('/');
+    const idx = parts.length >= 2 ? parts.length - 2 : 0;
+    return parts.slice(idx).join('/');
+  }
+
+  /** @param {string} path */
+  async function openPdf(path) {
+    try {
+      await invoke('open_file_path', { path });
+    } catch (e) {
+      alert('Could not open PDF: ' + e);
+    }
   }
 </script>
 
@@ -302,9 +365,26 @@
       {:else if activeTab === 'Resume'}
         <div class="card bg-base-200">
           <div class="card-body">
-            {#if app.application?.tailoredResume}
+            <div class="flex items-center gap-3 mb-3">
               <h2 class="card-title text-base">Resume</h2>
-              <div class="prose prose-sm max-w-none whitespace-pre-wrap">{app.application.tailoredResume}</div>
+              {#if getResumeSource(app.application) === 'ai-enhanced'}
+                <span class="badge badge-accent badge-sm">AI Enhanced</span>
+              {:else}
+                <span class="badge badge-ghost badge-sm">Original CV</span>
+              {/if}
+            </div>
+            {#if getResumeSource(app.application) === 'ai-enhanced'}
+              {@const pdfPath = getResumePdfPath(app)}
+              {#if pdfPath}
+                <div class="mb-3">
+                  <button class="btn btn-sm btn-outline gap-2" on:click={() => openPdf(pdfPath)}>
+                    📄 {shortPdfPath(pdfPath)}
+                  </button>
+                </div>
+              {/if}
+            {/if}
+            {#if app.application?.tailoredResume}
+              <div class="prose prose-sm max-w-none whitespace-pre-wrap">{stripMarkdown(app.application.tailoredResume)}</div>
             {:else}
               <p class="text-base-content/70">No resume data for this application.</p>
             {/if}

@@ -77,7 +77,7 @@ function resolveEntryPath(userId: string, entry: ManagedFileEntry): string {
   }
   const normalizedRel = rel.split('/').join(path.sep);
   const parts = normalizedRel.split(path.sep);
-  if (parts[0] !== 'storage' || parts.includes('..')) {
+  if ((parts[0] !== 'storage' && parts[0] !== 'resumes') || parts.includes('..')) {
     throw new Error('Invalid managed file path');
   }
   const full = path.join(userRoot, normalizedRel);
@@ -91,6 +91,33 @@ function sortByUpdatedDesc(a: ManagedFileEntry, b: ManagedFileEntry): number {
   const aTs = Number(a.updatedAt || a.updated_at || 0);
   const bTs = Number(b.updatedAt || b.updated_at || 0);
   return bTs - aTs;
+}
+
+export function resolveCanonicalResumePath(userId: string, preferredResumeFileName = ''): { filename: string; filePath: string } {
+  if (!userId) {
+    throw new Error('Missing userId. Cannot resolve canonical resume path.');
+  }
+  const index = loadIndex(userId);
+  const candidates = index.entries
+    .filter((entry) => entry.feature === 'resume' && isSupportedResumeFile(entry.filename))
+    .sort(sortByUpdatedDesc);
+
+  if (candidates.length === 0) {
+    throw new Error(`No canonical .doc/.docx/.pdf resume files found for userId ${userId}`);
+  }
+
+  const selected =
+    (preferredResumeFileName
+      ? candidates.find((entry) => entry.filename === preferredResumeFileName)
+      : undefined) ||
+    candidates.find((entry) => entry.filename.toLowerCase().includes('resume')) ||
+    candidates[0];
+
+  const fullPath = resolveEntryPath(userId, selected);
+  if (!fs.existsSync(fullPath)) {
+    throw new Error(`Resume file not found on disk: ${fullPath}`);
+  }
+  return { filename: selected.filename, filePath: fullPath };
 }
 
 export function listCanonicalResumeNames(userId: string): string[] {

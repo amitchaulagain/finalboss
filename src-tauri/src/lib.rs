@@ -481,6 +481,13 @@ mod tests {
 }
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+
+#[tauri::command]
+async fn get_app_config_path() -> Result<String, String> {
+    let root = get_app_data_root()?;
+    Ok(root.join("user-config.json").to_string_lossy().to_string())
+}
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -564,6 +571,26 @@ async fn read_file_async(filename: &str) -> Result<String, String> {
         Ok(content) => Ok(content),
         Err(e) => Err(format!("Failed to read file {}: {}", path.display(), e))
     }
+}
+
+#[tauri::command]
+async fn read_file_base64(filename: &str) -> Result<String, String> {
+    use tokio::fs;
+    use std::env;
+
+    let path = if filename.starts_with('/') || (cfg!(windows) && filename.len() > 1 && filename.chars().nth(1) == Some(':')) {
+        std::path::PathBuf::from(filename)
+    } else {
+        let mut project_root = env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+        if project_root.ends_with("src-tauri") {
+            project_root.pop();
+        }
+        project_root.join(filename)
+    };
+
+    let bytes = fs::read(&path).await.map_err(|e| format!("Failed to read file {}: {}", path.display(), e))?;
+    use base64::Engine as _;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
 #[tauri::command]
@@ -1347,10 +1374,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
+            get_app_config_path,
             greet,
             list_files,
             write_file_async,
             read_file_async,
+            read_file_base64,
             copy_file_async,
             rename_file_async,
             delete_file_async,

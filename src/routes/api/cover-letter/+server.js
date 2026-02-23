@@ -5,6 +5,23 @@ import path from 'path';
 
 const API_BASE = env.API_BASE || process.env.API_BASE || 'http://localhost:3000';
 const ALLOWED_RESUME_EXTENSIONS = ['.doc', '.docx', '.pdf'];
+
+/** @param {string} text */
+function stripMarkdown(text) {
+  return text
+    .replace(/^#{1,6}\s+/gm, '')           // headings
+    .replace(/\*\*(.+?)\*\*/gs, '$1')      // bold **
+    .replace(/__(.+?)__/gs, '$1')           // bold __
+    .replace(/\*(.+?)\*/gs, '$1')           // italic *
+    .replace(/(?<!\w)_(.+?)_(?!\w)/gs, '$1') // italic _
+    .replace(/`(.+?)`/g, '$1')             // inline code
+    .replace(/\[(.+?)\]\(.+?\)/g, '$1')    // links
+    .replace(/^>\s+/gm, '')                // blockquotes
+    .replace(/^[-*_]{3,}\s*$/gm, '')       // horizontal rules
+    .replace(/^[ \t]*[-*+]\s+/gm, '')      // bullet list markers
+    .replace(/\n{3,}/g, '\n\n')            // collapse excess blank lines
+    .trim();
+}
 /**
  * @typedef {Object} ManagedResumeEntry
  * @property {string=} feature
@@ -203,11 +220,10 @@ async function loadContactProfile(userId) {
       full_name: String(formData.fullName || '').trim(),
       email: String(formData.email || userId || '').trim(),
       phone: String(formData.phone || '').trim(),
-      linkedin_url: String(formData.linkedinUrl || '').trim(),
       resume_file_name: String(formData.resumeFileName || '').trim()
     };
 
-    if (!contactProfile.full_name && !contactProfile.email && !contactProfile.phone && !contactProfile.linkedin_url) {
+    if (!contactProfile.full_name && !contactProfile.email && !contactProfile.phone) {
       return null;
     }
     return contactProfile;
@@ -264,6 +280,13 @@ export async function POST({ request }) {
       strictQualityRetries: 1,
       contact_profile: contactProfile,
       prompt: `Write a compelling, professional cover letter for this job posting.
+
+STRICT RULES — these override everything else:
+- NEVER invent, fabricate, or modify any factual information
+- Only reference experiences, skills, and achievements that are explicitly stated in the provided resume
+- Do NOT fabricate projects, companies, dates, or accomplishments
+- Do NOT include a LinkedIn URL or any other URL anywhere in the letter
+
 Highlight relevant experience and skills that match the job requirements.
 Keep it concise (300-400 words) and personalized.
 Focus on demonstrating value and enthusiasm for the role.`
@@ -296,7 +319,7 @@ Focus on demonstrating value and enthusiasm for the role.`
       console.log('✅ Cover letter generated successfully');
       return json({
         success: true,
-        coverLetter: data.cover_letter,
+        coverLetter: stripMarkdown(data.cover_letter),
         metadata: {
           provider: 'deepseek-chat',
           timestamp: new Date().toISOString(),

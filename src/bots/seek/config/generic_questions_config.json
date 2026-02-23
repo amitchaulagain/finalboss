@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-02-15T12:37:49.294Z",
+  "lastUpdated": "2026-02-23T08:48:54.881Z",
   "questions": [
     {
       "id": 1,
@@ -30,9 +30,9 @@
         "javascript frameworks"
       ],
       "answer": [
+        "Svelte",
         "React",
-        "Vue",
-        "Angular"
+        "Vue"
       ]
     },
     {
@@ -43,9 +43,10 @@
         "languages proficient"
       ],
       "answer": [
-        "JavaScript",
         "Python",
-        "Go"
+        ".NET",
+        "SQL",
+        "Javascript"
       ]
     },
     {
@@ -61,26 +62,6 @@
       ]
     },
     {
-      "id": 6,
-      "match_keywords": [
-        "current salary",
-        "current rate"
-      ],
-      "answer": [
-        "70000"
-      ]
-    },
-    {
-      "id": 7,
-      "match_keywords": [
-        "expected salary",
-        "expected rate"
-      ],
-      "answer": [
-        "70000"
-      ]
-    },
-    {
       "id": 8,
       "match_keywords": [
         "salary",
@@ -92,15 +73,6 @@
       ]
     },
     {
-      "id": 9,
-      "match_keywords": [
-        "work preference"
-      ],
-      "answer": [
-        "Remote"
-      ]
-    },
-    {
       "id": 10,
       "match_keywords": [
         "security clearance",
@@ -108,66 +80,6 @@
       ],
       "answer": [
         "Yes"
-      ]
-    },
-    {
-      "id": 11,
-      "match_keywords": [
-        "programming languages",
-        "languages experienced",
-        "following programming languages"
-      ],
-      "answer": [
-        "JavaScript",
-        "Python",
-        "Java"
-      ]
-    },
-    {
-      "id": 12,
-      "match_keywords": [
-        ""
-      ],
-      "answer": [
-        ""
-      ]
-    },
-    {
-      "id": 13,
-      "match_keywords": [
-        ""
-      ],
-      "answer": [
-        ""
-      ]
-    },
-    {
-      "id": 14,
-      "match_keywords": [],
-      "answer": []
-    },
-    {
-      "id": 15,
-      "match_keywords": [
-        "mobile phone number",
-        "mobile number",
-        "phone number",
-        "telephone number",
-        "contact number"
-      ],
-      "answer": [
-        "0481839006"
-      ]
-    },
-    {
-      "id": 16,
-      "match_keywords": [
-        "email",
-        "e-mail",
-        "email address"
-      ],
-      "answer": [
-        "achaulagain123@gmail.com"
       ]
     }
   ],

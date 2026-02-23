@@ -103,27 +103,29 @@ export async function POST({ request }) {
       platform: "manual",
       job_title: "",
       company: "",
-      prompt: `You are an expert resume enhancement specialist. I will provide you with my current resume and a job description.
+      // Embed the actual resume text directly in the prompt so the AI cannot ignore it
+      prompt: `You are a resume enhancement specialist.
 
-Your task: Enhance my resume to maximize fit for this specific job.
+--- CANDIDATE'S ACTUAL RESUME (this is the ONLY source of truth) ---
+${resumeText}
+--- END OF RESUME ---
 
-Instructions:
+ABSOLUTE RULES — violation of any of these is not acceptable:
+1. Copy the candidate's full name, address, phone, email, and all contact details EXACTLY as they appear above. Do not alter, replace, or omit any of them.
+2. Copy every job title, employer name, employment date, education institution, degree, and graduation date EXACTLY as they appear above. Do not change or invent any of these.
+3. Do NOT invent, add, or infer any experience, skill, achievement, project, or qualification that is not in the resume above.
+4. Your ONLY permitted actions are: reorder sections, rephrase existing descriptions using stronger action verbs, and weave in relevant keywords from the job description.
+
+Task:
 1. Calculate ORIGINAL FIT SCORE (0-100%) based on current resume match
 2. Enhance the resume with focus on: ${enhancementFocus}
 3. Calculate ENHANCED FIT SCORE (0-100%) after improvements
-4. Provide the complete ENHANCED RESUME text
+4. Output the complete enhanced resume text
 
-Enhancement Focus Areas:
-- ATS Optimization: Keywords, formatting, ATS-friendly structure
-- Skills Matching: Highlight relevant technical and soft skills
-- Keyword Enhancement: Industry terminology and buzzwords
-- Experience Boost: Quantify achievements, action verbs, impact
-- General: Overall professional presentation
-
-Format your response clearly showing:
+Format your response:
 - Original Fit Score: XX%
 - Enhanced Fit Score: XX%
-- [Then provide the complete enhanced resume text]`
+- [Complete enhanced resume text below]`
     };
 
     console.log('🔄 Calling corpus-rag API for resume enhancement...');

@@ -160,6 +160,15 @@ async function getAccessToken(): Promise<string | null> {
 /**
  * Make an authenticated API request
  */
+/**
+ * Returns a ready-to-use "Bearer <token>" string for manual fetch calls (e.g. FormData uploads).
+ */
+export async function getBearerHeader(): Promise<string> {
+  const token = await getAccessToken();
+  if (!token) throw new Error('No authentication token available. Please login first.');
+  return `Bearer ${token}`;
+}
+
 export async function apiRequest(
   endpoint: string,
   method: string = 'POST',
