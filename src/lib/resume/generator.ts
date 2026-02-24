@@ -1271,42 +1271,116 @@ function formatDateRange(start: string | undefined, end: string | null | undefin
   return formatDateRangeUtil(start, end || null, style);
 }
 
+// ── PDF Generator (html2canvas) ───────────────────────────────────────────────
+
 /**
- * Helper function to download DOCX file (client-side)
+ * Generate a PDF from resume data using html2canvas + jsPDF.
+ * Renders the HTML template off-screen, captures it as a canvas, and
+ * splits it into A4 pages. This ensures the PDF matches the HTML preview exactly.
  */
-export async function downloadDocx(resumeData: ResumeData, filename: string): Promise<void> {
-  try {
-    if (typeof document === 'undefined') {
-      throw new Error('downloadDocx can only be called in a browser environment');
-    }
-    
-    console.log('Generating DOCX blob for:', filename);
-    const blob = await generateDocx(resumeData);
-    
-    if (!blob || blob.size === 0) {
-      throw new Error('Generated DOCX blob is empty');
-    }
-    
-    console.log('Blob created:', { size: blob.size, type: blob.type });
-    
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename.endsWith('.docx') ? filename : `${filename}.docx`;
-    a.style.display = 'none';
-    
-    document.body.appendChild(a);
-    a.click();
-    
-    // Cleanup after a short delay
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      console.log('Download complete and cleaned up');
-    }, 100);
-  } catch (error) {
-    console.error('Download error:', error);
-    throw error;
+export async function generatePdf(resumeData: ResumeData): Promise<Blob> {
+  const [{ default: html2canvas }, { default: jsPDF }, { getHtmlGenerator }] = await Promise.all([
+    import('html2canvas'),
+    import('jspdf'),
+    import('./templates/html'),
+  ]);
+
+  const generate = getHtmlGenerator(resumeData.templateId);
+  const html = generate(resumeData);
+
+  // Render inside a hidden iframe so the host page's CSS (DaisyUI/Tailwind
+  // oklch colors) cannot leak into the captured element.
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:absolute;left:-9999px;top:0;width:794px;height:1123px;border:none;visibility:hidden;';
+  document.body.appendChild(iframe);
+
+  await new Promise<void>((resolve, reject) => {
+    iframe.onload = () => resolve();
+    iframe.onerror = () => reject(new Error('iframe failed to load'));
+    iframe.srcdoc = html;
+  });
+
+  const iframeDoc = iframe.contentDocument;
+  const page = iframeDoc?.querySelector<HTMLElement>('.page');
+
+  if (!page || !iframeDoc) {
+    document.body.removeChild(iframe);
+    throw new Error('PDF generation failed: .page element not found in rendered HTML');
   }
+
+  try {
+    // Force layout
+    void page.offsetWidth;
+
+    const canvas = await html2canvas(page, {
+      scale: 2,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: '#ffffff',
+      logging: false,
+      width: page.scrollWidth,
+      height: page.scrollHeight,
+    });
+
+    const A4_W_MM = 210;
+    const A4_H_MM = 297;
+    const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+
+    const imgData = canvas.toDataURL('image/png');
+    const imgW = A4_W_MM;
+    const imgH = (canvas.height / canvas.width) * imgW;
+
+    let yOffset = 0;
+    let firstPage = true;
+
+    while (yOffset < imgH) {
+      if (!firstPage) doc.addPage();
+      firstPage = false;
+      doc.addImage(imgData, 'PNG', 0, -yOffset, imgW, imgH);
+      yOffset += A4_H_MM;
+    }
+
+    return doc.output('blob');
+  } finally {
+    document.body.removeChild(iframe);
+  }
+}
+
+/**
+ * Save a Blob to the user's Downloads folder via the Tauri backend.
+ * Returns the full saved path.
+ */
+async function saveBlobToDownloads(blob: Blob, filename: string): Promise<string> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  const arrayBuffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+  // Convert to base64 in chunks to avoid call-stack overflow on large files
+  let binary = '';
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  const contentBase64 = btoa(binary);
+  return invoke<string>('save_binary_to_downloads', { filename, contentBase64 });
+}
+
+/**
+ * Generate and save a PDF to the Downloads folder.
+ */
+export async function downloadPdf(resumeData: ResumeData, filename: string): Promise<string> {
+  const blob = await generatePdf(resumeData);
+  if (!blob || blob.size === 0) throw new Error('Generated PDF is empty');
+  const fname = filename.endsWith('.pdf') ? filename : `${filename}.pdf`;
+  return saveBlobToDownloads(blob, fname);
+}
+
+/**
+ * Generate and save a DOCX to the Downloads folder.
+ */
+export async function downloadDocx(resumeData: ResumeData, filename: string): Promise<string> {
+  const blob = await generateDocx(resumeData);
+  if (!blob || blob.size === 0) throw new Error('Generated DOCX blob is empty');
+  const fname = filename.endsWith('.docx') ? filename : `${filename}.docx`;
+  return saveBlobToDownloads(blob, fname);
 }
 

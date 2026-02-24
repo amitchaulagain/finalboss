@@ -61,8 +61,15 @@ const createResumesStore = () => {
         return add({
           ...resume,
           title: `${resume.title} (Copy)`,
+          isBase: false,
         });
       }
+    },
+    // Set one resume as base (clears all others)
+    setBase: (id: string): void => {
+      update(resumes =>
+        resumes.map(r => ({ ...r, isBase: r.id === id }))
+      );
     },
   };
 };
@@ -72,118 +79,130 @@ export const resumesStore = createResumesStore();
 // Store for the currently active/editing resume
 export const activeResume = writable<ResumeData | null>(null);
 
+// Temporary store for a resume that hasn't been saved yet (draft before first Save)
+export const draftResume = writable<ResumeData | null>(null);
+
 // Store for available templates
 export const templates = writable<any[]>([]); // Will be imported from templates
 
+// ── Standalone setBase export ────────────────────────────────────────────────
+
 /**
- * Create a new empty resume with a template
+ * Set a resume as the base/primary resume (clears isBase on all others)
  */
-export function createEmptyResume(templateId: string, title: string = 'New Resume'): ResumeData {
-  const template = getTemplateById(templateId);
-  
-  if (!template) {
-    throw new Error(`Template not found: ${templateId}`);
+export function setBase(id: string): void {
+  resumesStore.setBase(id);
+  autoSave();
+}
+
+// ── createResumeFromConfig ───────────────────────────────────────────────────
+
+/** Return the first non-empty, non-'N/A' value, or empty string. */
+function pick(...sources: (string | undefined | null)[]): string {
+  for (const s of sources) {
+    const v = s?.trim();
+    if (v && v !== 'N/A') return v;
   }
-  
+  return '';
+}
+
+/**
+ * Create a new resume pre-filled from user-config.json data.
+ *
+ * Personal info (fullName, email, phone, linkedin, address) is taken from
+ * `formData` (the user's saved configuration).
+ *
+ * All other sections (experience, education, skills, …) are populated from
+ * `parsedResume` only when that argument is explicitly supplied (e.g. when
+ * saving an AI-enhanced resume). When called without `parsedResume` — i.e.
+ * for a fresh template selection — all content sections start as single blank
+ * placeholder entries so the edit-page inputs show their placeholder text.
+ */
+export function createResumeFromConfig(
+  templateId: string,
+  title: string = 'My Resume',
+  formData?: Record<string, any>,
+  parsedResume?: any
+): ResumeData {
+  const template = getTemplateById(templateId);
+  if (!template) throw new Error(`Template not found: ${templateId}`);
+
+  const f = formData || {};
+  const pr = parsedResume || {};
+  const pi = pr.personalInfo || {};
+
+  // Whether the caller supplied a real parsed resume (e.g. AI enhancement save)
+  const hasParsed = parsedResume != null;
+
   return {
     id: generateId(),
     title,
+    isBase: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     templateId,
+    // Personal info always comes from the user's saved configuration.
     personalInfo: {
-      fullName: 'John Doe',
-      title: 'Software Engineer',
-      email: 'john.doe@example.com',
-      phone: '(555) 123-4567',
-      linkedin: 'linkedin.com/in/johndoe',
-      github: 'github.com/johndoe',
+      fullName: pick(f.fullName, pi.fullName),
+      title:    pick(pi.title),
+      email:    pick(f.email, pi.email),
+      phone:    pick(f.phone, pi.phone),
+      linkedin: pick(f.linkedinUrl, pi.linkedin),
+      github:   pick(pi.github),
+      address:  pick(f.address, pi.address),
     },
-    summary: 'Experienced Software Engineer with 5+ years of expertise in full-stack development, cloud architecture, and team leadership. Proven track record of delivering scalable applications that drive business growth.',
-    experience: [
-      {
-        id: generateId(),
-        jobTitle: 'Senior Software Engineer',
-        company: 'Tech Innovations Inc.',
-        startDate: 'Jan 2020',
-        endDate: 'Present',
-        achievements: [
-          'Led a team of 5 engineers to develop and launch a microservices-based SaaS platform serving 100K+ users',
-          'Reduced application response time by 40% through optimization and caching strategies',
-          'Implemented CI/CD pipelines that decreased deployment time by 60%',
-        ],
-      },
-      {
-        id: generateId(),
-        jobTitle: 'Software Engineer',
-        company: 'Digital Solutions Co.',
-        startDate: 'Jun 2018',
-        endDate: 'Dec 2019',
-        achievements: [
-          'Developed RESTful APIs handling 1M+ requests per day',
-          'Collaborated with cross-functional teams to deliver features ahead of schedule',
-          'Mentored junior developers and conducted code reviews',
-        ],
-      },
-    ],
-    education: [
-      {
-        id: generateId(),
-        degree: 'Bachelor of Science in Computer Science',
-        institution: 'State University',
-        graduationDate: '2018',
-        gpa: '3.8',
-      },
-    ],
-    skills: [
-      createSkill('JavaScript', 'Languages'),
-      createSkill('TypeScript', 'Languages'),
-      createSkill('Python', 'Languages'),
-      createSkill('React', 'Frameworks'),
-      createSkill('Node.js', 'Frameworks'),
-      createSkill('AWS', 'Cloud'),
-      createSkill('Docker', 'DevOps'),
-      createSkill('PostgreSQL', 'Databases'),
-    ],
-    certifications: [
-      {
-        id: generateId(),
-        name: 'AWS Certified Solutions Architect',
-        issuer: 'Amazon Web Services',
-        date: '2021',
-      },
-      {
-        id: generateId(),
-        name: 'Google Cloud Professional Cloud Architect',
-        issuer: 'Google Cloud',
-        date: '2020',
-      },
-    ],
-    projects: [
-      {
-        id: generateId(),
-        title: 'E-Commerce Platform',
-        description: [
-          'Built a scalable e-commerce platform using React and Node.js serving 50K+ products',
-          'Implemented payment gateway integration with Stripe and PayPal',
-          'Optimized database queries resulting in 50% faster page load times',
-        ],
-      },
-    ],
-    languages: [
-      {
-        id: generateId(),
-        name: 'English',
-        proficiency: 'Native',
-      },
-      {
-        id: generateId(),
-        name: 'Spanish',
-        proficiency: 'Fluent',
-      },
-    ],
+    // Content sections: use parsed data only when explicitly provided.
+    summary: hasParsed ? (pr.summary?.trim() || '') : '',
+    experience: hasParsed && pr.experience?.length
+      ? pr.experience.map((e: any) => ({
+          id: generateId(),
+          jobTitle:     e.jobTitle  || '',
+          company:      e.company   || '',
+          location:     e.location  || '',
+          startDate:    e.startDate || '',
+          endDate:      e.endDate   || 'Present',
+          achievements: Array.isArray(e.achievements) && e.achievements.length
+            ? e.achievements.filter(Boolean)
+            : [],
+        }))
+      : [createExperience()],
+    education: hasParsed && pr.education?.length
+      ? pr.education.map((e: any) => ({
+          id: generateId(),
+          degree:         e.degree         || '',
+          institution:    e.institution    || '',
+          graduationDate: e.graduationDate || '',
+          gpa:            e.gpa            || '',
+        }))
+      : [createEducation()],
+    skills: hasParsed && pr.skills?.length
+      ? pr.skills.map((s: any) => createSkill(s.name || '', s.category || 'General'))
+      : [createSkill()],
+    certifications: hasParsed
+      ? (pr.certifications || []).map((c: any) => ({
+          id: generateId(), name: c.name || '', issuer: c.issuer || '', date: c.date || ''
+        }))
+      : [],
+    projects: hasParsed
+      ? (pr.projects || []).map((p: any) => ({
+          id: generateId(), title: p.title || '',
+          description: Array.isArray(p.description) ? p.description.filter(Boolean) : []
+        }))
+      : [],
+    languages: hasParsed
+      ? (pr.languages || []).map((l: any) => ({
+          id: generateId(), name: l.name || '', proficiency: l.proficiency || 'Intermediate'
+        }))
+      : [],
     customSections: [],
   };
+}
+
+/**
+ * Create a new empty resume with a template (delegates to createResumeFromConfig)
+ */
+export function createEmptyResume(templateId: string, title: string = 'New Resume'): ResumeData {
+  return createResumeFromConfig(templateId, title);
 }
 
 /**
@@ -215,7 +234,7 @@ export function createEducation(): Education {
 /**
  * Create a new skill
  */
-export function createSkill(name: string = '', category: string = 'Other'): Skill {
+export function createSkill(name: string = '', category: string = ''): Skill {
   return {
     id: generateId(),
     name,
@@ -257,21 +276,82 @@ export function createLanguage(): Language {
   };
 }
 
+// ── N/A migration ────────────────────────────────────────────────────────────
+
 /**
- * Initialize the store with any persisted resumes
+ * Replace every 'N/A' placeholder string that the old PDF-extraction system
+ * wrote into saved resumes with an empty string, so the edit-page inputs
+ * show their HTML placeholder text instead of the orange 'N/A' value.
+ */
+function normalizeResumeData(r: ResumeData): ResumeData {
+  const c = (v: string | null | undefined): string =>
+    !v || v.trim() === 'N/A' ? '' : v;
+
+  return {
+    ...r,
+    summary: c(r.summary),
+    personalInfo: {
+      ...r.personalInfo,
+      title:    c(r.personalInfo.title),
+      github:   c(r.personalInfo.github ?? ''),
+      address:  c(r.personalInfo.address ?? ''),
+    },
+    experience: (r.experience || []).map(e => ({
+      ...e,
+      jobTitle:     c(e.jobTitle),
+      company:      c(e.company),
+      location:     c(e.location),
+      startDate:    c(e.startDate),
+      endDate:      e.endDate === 'N/A' ? null : e.endDate,
+      achievements: (e.achievements || [])
+        .map(a => c(a))
+        .filter(a => a !== ''),
+    })),
+    education: (r.education || []).map(e => ({
+      ...e,
+      degree:         c(e.degree),
+      institution:    c(e.institution),
+      graduationDate: c(e.graduationDate),
+    })),
+    skills: (r.skills || []).map(s => ({
+      ...s,
+      name: c(s.name),
+    })),
+    certifications: (r.certifications || []).map(cert => ({
+      ...cert,
+      name:   c(cert.name),
+      issuer: c(cert.issuer),
+    })),
+    projects: (r.projects || []).map(p => ({
+      ...p,
+      title:       c(p.title),
+      description: (p.description || []).map(d => c(d)).filter(d => d !== ''),
+    })),
+    languages: (r.languages || []).map(l => ({
+      ...l,
+      name: c(l.name),
+    })),
+  };
+}
+
+// ── Persistence ───────────────────────────────────────────────────────────────
+
+/**
+ * Initialize the store with any persisted resumes.
+ * Any legacy 'N/A' strings are normalised to '' on first load.
  */
 export async function loadResumes(): Promise<void> {
   if (!browser) return;
-  
+
   try {
-    // Try to load from localStorage first
     const stored = localStorage.getItem('questBot_resumes');
     if (stored) {
-      const resumes = JSON.parse(stored);
+      const raw: ResumeData[] = JSON.parse(stored);
+      const resumes = raw.map(normalizeResumeData);
       resumesStore.set(resumes);
+      // Persist the cleaned data so normalization only runs once
+      localStorage.setItem('questBot_resumes', JSON.stringify(resumes));
     }
-    
-    // TODO: Load from Tauri file system in production
   } catch (error) {
     console.error('Failed to load resumes:', error);
   }

@@ -1225,6 +1225,41 @@ async fn get_managed_file_path(input: ManagedFileOpenInput) -> Result<String, St
     Ok(full_path.display().to_string())
 }
 
+/// Save arbitrary binary content (base64-encoded) directly to the user's Downloads folder.
+#[tauri::command]
+async fn save_binary_to_downloads(filename: String, content_base64: String) -> Result<String, String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(content_base64.as_bytes())
+        .map_err(|e| format!("Invalid base64 payload: {}", e))?;
+
+    let downloads_dir = dirs::download_dir()
+        .ok_or_else(|| "Could not find Downloads folder".to_string())?;
+
+    // Avoid overwriting: append a counter if the filename is already taken
+    let stem = std::path::Path::new(&filename)
+        .file_stem().and_then(|s| s.to_str()).unwrap_or("file").to_string();
+    let ext  = std::path::Path::new(&filename)
+        .extension().and_then(|s| s.to_str()).unwrap_or("").to_string();
+
+    let mut dest = downloads_dir.join(&filename);
+    let mut counter = 1u32;
+    while dest.exists() {
+        let new_name = if ext.is_empty() {
+            format!("{} ({})", stem, counter)
+        } else {
+            format!("{} ({}).{}", stem, counter, ext)
+        };
+        dest = downloads_dir.join(new_name);
+        counter += 1;
+    }
+
+    tokio::fs::write(&dest, &bytes)
+        .await
+        .map_err(|e| format!("Failed to write file: {}", e))?;
+
+    Ok(dest.display().to_string())
+}
+
 #[tauri::command]
 async fn save_managed_file_to_downloads(input: ManagedFileOpenInput) -> Result<String, String> {
     let index = load_index(&input.user_id)?;
@@ -1399,6 +1434,7 @@ pub fn run() {
             open_managed_file,
             open_file_path,
             get_managed_file_path,
+            save_binary_to_downloads,
             save_managed_file_to_downloads,
             open_managed_file_parent,
             export_managed_files_backup,

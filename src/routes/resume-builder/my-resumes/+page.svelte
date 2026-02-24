@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { resumesStore, loadResumes } from '$lib/resume/store';
+  import { resumesStore, loadResumes, setBase, autoSave } from '$lib/resume/store';
   import { downloadDocx } from '$lib/resume/generator';
   import type { ResumeData } from '$lib/resume/types';
   
@@ -38,7 +38,13 @@
   async function handleDelete(resumeId: string) {
     if (confirm('Are you sure you want to delete this resume? This action cannot be undone.')) {
       resumesStore.delete(resumeId);
+      autoSave();
     }
+  }
+
+  function handleSetBase(id: string) {
+    resumesStore.setBase(id);
+    autoSave();
   }
 </script>
 
@@ -78,6 +84,9 @@
             <div class="flex items-start justify-between mb-4">
               <div class="flex-1">
                 <h2 class="card-title text-xl mb-2">{resume.title}</h2>
+                {#if resume.isBase}
+                  <div class="badge badge-warning font-semibold gap-1 mb-1">★ Base Resume</div>
+                {/if}
                 <div class="badge badge-outline">{resume.personalInfo.title || 'No title'}</div>
               </div>
               <div class="dropdown dropdown-end">
@@ -101,6 +110,11 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                       </svg>
                       Duplicate
+                    </button>
+                  </li>
+                  <li>
+                    <button on:click={() => handleSetBase(resume.id)} class:text-warning={!resume.isBase}>
+                      ★ {resume.isBase ? 'Current Base' : 'Set as Base'}
                     </button>
                   </li>
                   <li>

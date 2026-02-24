@@ -492,11 +492,6 @@
     try {
       const config = {
         formData: { ...formData },
-        original_resume: {
-          filename: formData.resumeFileName || '',
-          rawText: extractedResumeText,
-          parsed: parsedResumeData ?? null
-        },
         general_questions: questionsData ?? null,
         lastUpdated: new Date().toISOString()
       };

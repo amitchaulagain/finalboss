@@ -1,30 +1,29 @@
-# Finalboss App Flow 
+# Finalboss App Flow
 
 ## 1. Configuration
 
-- [] Configuration page contains the basic form: Name, address, phone, email, upload resume, 
-- [] Configuration also contains Jobs Preferance section: Keywords, Job Type (full-time,part time,any), job location (on-site,remote,hybrid,any), minimum salary, max salary, Industry type, Experience level, Exclude company names, Exclude keywords, custom resume for each job checkbox etc.
+- [x] Configuration page contains the basic form: Name, address, phone, email, upload resume.
 
-- [] Configuration has a third section called "General QA": it contains list of questions and possible answers. Answers could be free typed in input boxes or selected option among many like the present form of 'Generic Questions' page. In fact move all the questions and ans from 'Generic Questions' to this section of configuration.
+- [x] Configuration also contains Jobs Preference section: Keywords, Job Type (full-time, part time, any), job location (on-site, remote, hybrid, any), minimum salary, max salary, Industry type, Experience level, Exclude company names, Exclude keywords, custom resume for each job checkbox etc.
 
-- [] The basic form and jobs preferance section is compulsory to run any bot, but in case of generic questions we'll later determine which are 'required' and will label as such without filling them up user won't be able to run job bots.
+- [x] Configuration has a third section called "General QA": it contains list of questions and possible answers. Answers could be free typed in input boxes or selected option among many. All questions and answers from 'Generic Questions' page moved here.
 
-- [] Save this configuration in a single json including information extracted from the upload resume. Make sure this original resume data is in a separate section like 'original resume' in the json so that it can be accessed separately when needed.
+- [x] The basic form and jobs preference section is compulsory to run any bot. Generic questions have required labels — without filling required ones, user won't be able to run job bots.
 
-- [] The json file should be stored in users's data folder (for e.g. in linux inside ~/.local/share/finalboss/ 
+- [x] Configuration saved as a single JSON file (formData + general_questions) stored in the user's data folder (Linux: ~/.local/share/finalboss/, macOS: ~/Library/Application Support/FinalBoss/, Windows: %APPDATA%/FinalBoss/).
 
 ## 2. Resume Builder
 
-- [] Resume builder shows different designs/templates for resumes that will be used to generate user's final resume pdf/docx files and will be uploaded to job platforms
+- [x] Resume builder shows different template designs for resumes that will be used to generate user's final resume pdf/docx files to be uploaded to job platforms.
 
-- [] All the necessary data should be filled first using user set configuration and if not in the configuration, using user's uploaded resume data i.e. 'original_resume' section in user-config.json file. Preference should be given to the configuration and not the original resume in case of conflicting information. 
+- [x] Resume data pre-filled from user configuration on new resume creation.
 
-- [] Data that are not available should be marked as 'N/A' in red/orange instead of filling dummy placeholder. This is to prevent building the base resume with dummy data that could be later uploaded to job sites.
+- [x] Data that are not available are marked as 'N/A' in grey/italic instead of filling dummy placeholders. This prevents building the base resume with dummy data that could be later uploaded to job sites.
 
-- [] User can manually edit/change/add data in the resume template and save just like present version of 'Resume builder' that is WYSIWYG.
+- [x] User can manually edit/change/add data in the resume template and save — full WYSIWYG editor. Each heading and content is editable. Sections can be added, removed, or hidden.
 
-- [] When user saves the resume, save the first resume as the base resume. This resume will be either uploaded to job sites (default) or an enhanced custom resume will be created for each job (if this is set in the configuration) based on it.
+- [x] When user saves the resume, the first resume is saved as the base resume. This resume will be either uploaded to job sites (default) or an enhanced custom resume will be created for each job (if set in configuration) based on it.
 
-- [] each enhanced resume version will be saved with appropriate names and user can set any one of them as the base resume via the 'Resume Builder' page.
+- [x] Each enhanced resume version is saved with an appropriate name and user can set any one of them as the base resume via the 'My Resumes' page.
 
-- [] Resume builder page also has a resume enhancement button that user can use manually to enhance the base resume based on a saved job detail (saved from previous sessions. This section will have a selection input button that will select one of the previously saved jobs and an 'enhance' button. The resume is enhanced and displayed under the enhancement section just like present 'Resume Enhancement' page.
+- [x] Resume builder page has a resume enhancement section where user can manually enhance the base resume based on a saved job. Includes a job selector dropdown and an Enhance button. The enhanced resume is displayed inline with a fit score and can be saved to My Resumes.

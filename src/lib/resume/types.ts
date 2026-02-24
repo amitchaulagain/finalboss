@@ -3,6 +3,12 @@
  * Based on ATS-friendly resume.io templates
  */
 
+export interface ContactExtra {
+  id: string;
+  label: string;
+  value: string;
+}
+
 export interface PersonalInfo {
   fullName: string;
   title: string;
@@ -12,6 +18,7 @@ export interface PersonalInfo {
   github?: string;
   website?: string;
   address?: string;
+  contactExtras?: ContactExtra[];
 }
 
 export interface WorkExperience {
@@ -80,6 +87,7 @@ export interface CustomSection {
 export interface ResumeData {
   id: string;
   title: string; // User-friendly resume name
+  isBase?: boolean; // Marks this as the base/primary resume
   createdAt: string;
   updatedAt: string;
   templateId: string;
@@ -96,7 +104,11 @@ export interface ResumeData {
   projects?: Project[];
   languages?: Language[];
   customSections?: CustomSection[];
-  
+
+  // Section customisation
+  sectionTitles?: Record<string, string>;  // user-renamed section headings
+  hiddenSections?: string[];               // section IDs hidden by user
+
   // Settings
   enablePageNumbers?: boolean;
   pageMargins?: {
@@ -179,6 +191,7 @@ export interface TemplateStyle {
   headerStyle: 'plain' | 'underline' | 'background' | 'border';
   dividerStyle: 'line' | 'dotted' | 'gradient' | 'none';
   showAccentBars: boolean;
+  nameUppercase?: boolean;   // Whether the name should be rendered all-caps
 }
 
 export interface TemplateMetadata {
