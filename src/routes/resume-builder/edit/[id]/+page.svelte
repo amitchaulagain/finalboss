@@ -216,12 +216,20 @@ import { getEffectiveFont, getEffectiveFontSize, getLetterSpacing, getLineSpacin
   $: if (resume && !contactFieldsInitialized) {
     contactFieldsInitialized = true;
     const shown = new Set<string>();
+    shown.add('phone');
+    shown.add('email');
     if (resume.personalInfo.linkedin) shown.add('linkedin');
     if (resume.personalInfo.github)   shown.add('github');
     if (resume.personalInfo.website)  shown.add('website');
     if (resume.personalInfo.address)  shown.add('address');
     shownContactFields = shown;
   }
+
+  $: anyBeforePhone    = shownContactFields.has('address');
+  $: anyBeforeEmail    = anyBeforePhone    || shownContactFields.has('phone');
+  $: anyBeforeLinkedin = anyBeforeEmail    || shownContactFields.has('email');
+  $: anyBeforeGithub   = anyBeforeLinkedin || shownContactFields.has('linkedin');
+  $: anyBeforeWebsite  = anyBeforeGithub   || shownContactFields.has('github');
 
   function addContactField(field: string) {
     shownContactFields = new Set([...shownContactFields, field]);
@@ -442,44 +450,58 @@ import { getEffectiveFont, getEffectiveFontSize, getLetterSpacing, getLineSpacin
               <input
                 type="text"
                 class="contact-input"
+                size={Math.max(4, (resume.personalInfo.address || 'City, Country').length)}
                 style:color={template?.style.textColor || '#000000'}
                 bind:value={resume.personalInfo.address}
                 placeholder="City, Country"
               />
               <button class="contact-remove" on:click={() => removeContactField('address')} title="Remove Address">×</button>
             </span>
-            <span class="contact-sep" style:color={template?.style.dividerColor || '#9ca3af'}>|</span>
           {/if}
 
-          <!-- Phone — always present -->
-          <span class="contact-label">phone:</span>
-          <input
-            type="tel"
-            class="contact-input {naClass(resume.personalInfo.phone)}"
-            style:color={template?.style.textColor || '#000000'}
-            bind:value={resume.personalInfo.phone}
-            placeholder="Phone number"
-          />
+          <!-- Phone -->
+          {#if shownContactFields.has('phone')}
+            {#if anyBeforePhone}<span class="contact-sep" style:color={template?.style.dividerColor || '#9ca3af'}>|</span>{/if}
+            <span class="contact-optional-field">
+              <span class="contact-label">phone:</span>
+              <input
+                type="tel"
+                class="contact-input {naClass(resume.personalInfo.phone)}"
+                size={Math.max(4, (resume.personalInfo.phone || 'Phone number').length)}
+                style:color={template?.style.textColor || '#000000'}
+                bind:value={resume.personalInfo.phone}
+                placeholder="Phone number"
+              />
+              <button class="contact-remove" on:click={() => removeContactField('phone')} title="Remove Phone">×</button>
+            </span>
+          {/if}
 
-          <!-- Email — always present -->
-          <span class="contact-sep" style:color={template?.style.dividerColor || '#9ca3af'}>|</span>
-          <span class="contact-label">email:</span>
-          <input
-            type="email"
-            class="contact-input {naClass(resume.personalInfo.email)}"
-            style:color={template?.style.textColor || '#000000'}
-            bind:value={resume.personalInfo.email}
-            placeholder="email@example.com"
-          />
+          <!-- Email -->
+          {#if shownContactFields.has('email')}
+            {#if anyBeforeEmail}<span class="contact-sep" style:color={template?.style.dividerColor || '#9ca3af'}>|</span>{/if}
+            <span class="contact-optional-field">
+              <span class="contact-label">email:</span>
+              <input
+                type="email"
+                class="contact-input {naClass(resume.personalInfo.email)}"
+                size={Math.max(4, (resume.personalInfo.email || 'email@example.com').length)}
+                style:color={template?.style.textColor || '#000000'}
+                bind:value={resume.personalInfo.email}
+                placeholder="email@example.com"
+              />
+              <button class="contact-remove" on:click={() => removeContactField('email')} title="Remove Email">×</button>
+            </span>
+          {/if}
 
           <!-- LinkedIn — optional -->
           {#if shownContactFields.has('linkedin')}
-            <span class="contact-sep" style:color={template?.style.dividerColor || '#9ca3af'}>|</span>
+            {#if anyBeforeLinkedin}<span class="contact-sep" style:color={template?.style.dividerColor || '#9ca3af'}>|</span>{/if}
             <span class="contact-optional-field">
               <span class="contact-label">linkedin:</span>
               <input
                 type="text"
-                class="contact-input"
+                class="contact-input contact-input-url"
+                size={Math.max(4, (resume.personalInfo.linkedin || 'linkedin.com/in/username').length)}
                 style:color={template?.style.textColor || '#000000'}
                 bind:value={resume.personalInfo.linkedin}
                 placeholder="linkedin.com/in/username"
@@ -490,12 +512,13 @@ import { getEffectiveFont, getEffectiveFontSize, getLetterSpacing, getLineSpacin
 
           <!-- GitHub — optional -->
           {#if shownContactFields.has('github')}
-            <span class="contact-sep" style:color={template?.style.dividerColor || '#9ca3af'}>|</span>
+            {#if anyBeforeGithub}<span class="contact-sep" style:color={template?.style.dividerColor || '#9ca3af'}>|</span>{/if}
             <span class="contact-optional-field">
               <span class="contact-label">github:</span>
               <input
                 type="text"
-                class="contact-input"
+                class="contact-input contact-input-url"
+                size={Math.max(4, (resume.personalInfo.github || 'github.com/username').length)}
                 style:color={template?.style.textColor || '#000000'}
                 bind:value={resume.personalInfo.github}
                 placeholder="github.com/username"
@@ -506,12 +529,13 @@ import { getEffectiveFont, getEffectiveFontSize, getLetterSpacing, getLineSpacin
 
           <!-- Website — optional -->
           {#if shownContactFields.has('website')}
-            <span class="contact-sep" style:color={template?.style.dividerColor || '#9ca3af'}>|</span>
+            {#if anyBeforeWebsite}<span class="contact-sep" style:color={template?.style.dividerColor || '#9ca3af'}>|</span>{/if}
             <span class="contact-optional-field">
               <span class="contact-label">website:</span>
               <input
                 type="url"
-                class="contact-input"
+                class="contact-input contact-input-url"
+                size={Math.max(4, (resume.personalInfo.website || 'yourwebsite.com').length)}
                 style:color={template?.style.textColor || '#000000'}
                 bind:value={resume.personalInfo.website}
                 placeholder="yourwebsite.com"
@@ -527,6 +551,7 @@ import { getEffectiveFont, getEffectiveFontSize, getLetterSpacing, getLineSpacin
               <input
                 type="text"
                 class="contact-input contact-extra-label"
+                size={Math.max(4, (extra.label || 'label').length)}
                 style:color={template?.style.textColor || '#000000'}
                 bind:value={extra.label}
                 placeholder="label"
@@ -534,6 +559,7 @@ import { getEffectiveFont, getEffectiveFontSize, getLetterSpacing, getLineSpacin
               <input
                 type="text"
                 class="contact-input"
+                size={Math.max(4, (extra.value || 'value').length)}
                 style:color={template?.style.textColor || '#000000'}
                 bind:value={extra.value}
                 placeholder="value"
@@ -543,9 +569,7 @@ import { getEffectiveFont, getEffectiveFontSize, getLetterSpacing, getLineSpacin
           {/each}
 
           <!-- "+" button — adds a new label: value segment -->
-          <span class="contact-add-wrapper">
-            <button class="contact-add-btn" on:click={addContactExtra} title="Add contact field">+</button>
-          </span>
+            <button class="btn btn-xs btn-primary font-bold ml-auto" on:click={addContactExtra} title="Add contact field">+ Add</button>
         </div>
         {/if}<!-- end {#if !contactInSidebar} -->
       </div>
@@ -925,22 +949,32 @@ import { getEffectiveFont, getEffectiveFontSize, getLetterSpacing, getLineSpacin
                  style:color={template?.style.textColor || '#000000'}>
 
               <!-- Phone -->
+              {#if shownContactFields.has('phone')}
               <div class="sidebar-contact-item">
-                <span class="sidebar-item-label">Phone</span>
+                <div class="flex items-center justify-between">
+                  <span class="sidebar-item-label">Phone</span>
+                  <button class="contact-remove" on:click={() => removeContactField('phone')} title="Remove">×</button>
+                </div>
                 <input type="tel" class="contact-input w-full text-black"
                   style:color={template?.style.textColor || '#000000'}
                   bind:value={resume.personalInfo.phone}
                   placeholder="Phone number" />
               </div>
+              {/if}
 
               <!-- Email -->
+              {#if shownContactFields.has('email')}
               <div class="sidebar-contact-item">
-                <span class="sidebar-item-label">Email</span>
+                <div class="flex items-center justify-between">
+                  <span class="sidebar-item-label">Email</span>
+                  <button class="contact-remove" on:click={() => removeContactField('email')} title="Remove">×</button>
+                </div>
                 <input type="email" class="contact-input w-full text-black"
                   style:color={template?.style.textColor || '#000000'}
                   bind:value={resume.personalInfo.email}
                   placeholder="email@example.com" />
               </div>
+              {/if}
 
               <!-- Address — optional -->
               {#if shownContactFields.has('address')}
@@ -1015,6 +1049,8 @@ import { getEffectiveFont, getEffectiveFontSize, getLetterSpacing, getLineSpacin
 
               <!-- Add optional fields -->
               <div class="flex flex-wrap items-center gap-2 mt-1">
+                {#if !shownContactFields.has('phone')}<button class="contact-add-btn" on:click={() => addContactField('phone')}>+ Phone</button>{/if}
+                {#if !shownContactFields.has('email')}<button class="contact-add-btn" on:click={() => addContactField('email')}>+ Email</button>{/if}
                 {#if !shownContactFields.has('address')}<button class="contact-add-btn" on:click={() => addContactField('address')}>+ Address</button>{/if}
                 {#if !shownContactFields.has('linkedin')}<button class="contact-add-btn" on:click={() => addContactField('linkedin')}>+ LinkedIn</button>{/if}
               </div>
@@ -1260,9 +1296,7 @@ import { getEffectiveFont, getEffectiveFontSize, getLetterSpacing, getLineSpacin
     background: transparent;
     border-bottom: 1px solid transparent;
     padding: 1px 2px;
-    min-width: 60px;
-    max-width: 220px;
-    width: auto;
+    min-width: 0;
     transition: border-color 0.15s;
   }
   .contact-input:hover,
@@ -1284,7 +1318,7 @@ import { getEffectiveFont, getEffectiveFontSize, getLetterSpacing, getLineSpacin
   }
 
   .contact-remove {
-    opacity: 0;
+    opacity: 0.25;
     background: none;
     border: none;
     cursor: pointer;
