@@ -455,19 +455,6 @@
       } catch {}
     }
 
-    // Fall back to old project-relative path for migration
-    if (!configLoaded) {
-      try {
-        const configContent = await invoke<string>('read_file_async', { filename: 'src/bots/user-bots-config.json' });
-        const config = JSON.parse(configContent);
-        if (config.formData) {
-          formData = { ...formData, ...config.formData };
-        }
-        configLoaded = true;
-        console.log('Config migrated from src/bots/user-bots-config.json');
-      } catch {}
-    }
-
     if (!configLoaded) {
       console.log('No existing config found, using defaults');
     }
@@ -496,7 +483,7 @@
         lastUpdated: new Date().toISOString()
       };
 
-      const targetPath = appConfigPath || 'src/bots/user-bots-config.json';
+      const targetPath = appConfigPath || await invoke<string>('get_app_config_path');
       await invoke<string>('write_file_async', {
         filename: targetPath,
         content: JSON.stringify(config, null, 2)

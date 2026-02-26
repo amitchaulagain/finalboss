@@ -42,8 +42,8 @@ export const setupPlaywrightBrowser = async (
   sessionsDir: string;
 }> => {
   try {
-    const configPath = path.join(__dirname, 'user-bots-config.json');
-    const config: BotConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const { readUserConfig } = await import('./user-config.js');
+    const config: BotConfig = readUserConfig() as BotConfig;
 
     // Create session management structure
     const sessionsDir = path.join(process.cwd(), 'sessions', botName);

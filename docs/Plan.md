@@ -27,3 +27,20 @@
 - [x] Each enhanced resume version is saved with an appropriate name and user can set any one of them as the base resume via the 'My Resumes' page.
 
 - [x] Resume builder page has a resume enhancement section where user can manually enhance the base resume based on a saved job. Includes a job selector dropdown and an Enhance button. The enhanced resume is displayed inline with a fit score and can be saved to My Resumes.
+
+
+## 3. Seek Bot
+
+- [] Check if the Seek Bot is uploading resumes correctly?. If the user's configuration has 'rewrite resume for each job' option selected, then the bot must enhance the 'base resume' and upload it. If not, it should upload the original resume uploaded by the user. 
+
+- [x] Resume's should be uploaded as a pdf file unless the input box suggests another format like docx.
+
+- [] when starting the bot, it should check if the required resume is available i.e. the resume is uploaded or the base resume has been prepared before starting, otherwise show a message saying to upload or create a base resume.
+
+- [] Is the Seek Bot using the data from the configuration in the cover letter
+
+- [] Is the Seek Bot answering all questions with correct answers?
+
+- [] Is the Seek Bot clicking on 'Continue' button after answering questions?
+
+- [] Is the Seek Bot clicking on the 'Submit Application' button?

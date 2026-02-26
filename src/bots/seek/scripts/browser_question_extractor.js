@@ -5,10 +5,48 @@ function extractEmployerQuestions() {
   var questions = [];
   var questionCounter = 0;
 
+  // Helper: find the real group/question label for a radio or checkbox element
+  function findGroupLabel(element, optionTexts) {
+    // Priority 1: fieldset > legend
+    var fieldset = element.closest('fieldset');
+    if (fieldset) {
+      var legend = fieldset.querySelector('legend');
+      if (legend && legend.textContent.trim()) return legend.textContent.trim();
+    }
+    // Priority 2: [role="group"] aria-label / aria-labelledby
+    var group = element.closest('[role="group"]');
+    if (group) {
+      var ariaLabel = group.getAttribute('aria-label');
+      if (ariaLabel) return ariaLabel.trim();
+      var labelledBy = group.getAttribute('aria-labelledby');
+      if (labelledBy) {
+        var el = document.getElementById(labelledBy);
+        if (el) return el.textContent.trim();
+      }
+    }
+    // Priority 3: walk up the DOM looking for a <strong> that is not an option
+    var current = element.parentElement;
+    for (var i = 0; i < 8 && current; i++) {
+      var strongs = current.querySelectorAll('strong');
+      for (var s = 0; s < strongs.length; s++) {
+        var text = strongs[s].textContent.trim();
+        if (text && optionTexts.indexOf(text) === -1 &&
+            (text.includes('?') || text.toLowerCase().includes('following') ||
+             text.toLowerCase().includes('which') || text.toLowerCase().includes('experience') ||
+             text.toLowerCase().includes('how many') || text.toLowerCase().includes('describe'))) {
+          return text;
+        }
+      }
+      current = current.parentElement;
+    }
+    return '';
+  }
+
   // Strategy 1: Seek-specific - find questions by looking for specific patterns
   // Look for containers that have labels with 'for' attributes pointing to form elements
   var allLabels = document.querySelectorAll('label[for]');
   var processedQuestions = new Set();
+  var processedRadioNames = new Set();
 
   allLabels.forEach(function(label) {
     const forId = label.getAttribute('for');
@@ -16,14 +54,11 @@ function extractEmployerQuestions() {
 
     if (!formElement) return;
 
-    // Handle checkbox groups using the label-driven approach
-
     // Get question text from the label
     const strongEl = label.querySelector('strong');
     let questionText = strongEl ? strongEl.textContent.trim() : label.textContent.trim();
 
-    if (!questionText || processedQuestions.has(questionText)) return;
-    processedQuestions.add(questionText);
+    if (!questionText) return;
 
     // Find the container (usually several divs up from the form element)
     let container = formElement.closest('div[class*="_5wkk7p0"]');
@@ -39,6 +74,9 @@ function extractEmployerQuestions() {
 
     // Determine question type based on the form element
     if (formElement.tagName === 'SELECT') {
+      if (processedQuestions.has(questionText)) return;
+      processedQuestions.add(questionText);
+
       console.log(`SELECT element has ${formElement.options.length} options`);
 
       const rawOptions = Array.from(formElement.options);
@@ -63,6 +101,9 @@ function extractEmployerQuestions() {
         elementId: forId
       });
     } else if (formElement.tagName === 'TEXTAREA' || formElement.type === 'text') {
+      if (processedQuestions.has(questionText)) return;
+      processedQuestions.add(questionText);
+
       questions.push({
         type: 'text',
         question: questionText,
@@ -71,71 +112,40 @@ function extractEmployerQuestions() {
         elementId: forId
       });
     } else if (formElement.type === 'radio') {
-      // For radio buttons, find all with the same name
-      const radioGroup = document.querySelectorAll(`input[type="radio"][name="${formElement.name}"]`);
-      const options = Array.from(radioGroup).map(radio => {
-        const radioLabel = document.querySelector(`label[for="${radio.id}"]`);
+      var radioName = formElement.name;
+      // Skip — this radio group was already added via a previous label
+      if (processedRadioNames.has(radioName)) return;
+      processedRadioNames.add(radioName);
+
+      var radioGroup = document.querySelectorAll('input[type="radio"][name="' + radioName + '"]');
+      var options = Array.from(radioGroup).map(function(radio) {
+        var radioLabel = document.querySelector('label[for="' + radio.id + '"]');
         return radioLabel ? radioLabel.textContent.trim() : radio.value;
-      }).filter(opt => opt);
+      }).filter(function(opt) { return opt; });
+
+      // Find the real question heading — NOT the option label text
+      var realQuestion = findGroupLabel(formElement, options);
+      if (!realQuestion) {
+        // Last resort: use questionText only if it doesn't look like an option
+        realQuestion = options.indexOf(questionText) === -1 ? questionText : '';
+      }
+      if (!realQuestion) return; // Can't determine question text — skip
+
+      // Track by real question text to avoid duplicates
+      if (processedQuestions.has(realQuestion)) return;
+      processedQuestions.add(realQuestion);
 
       questions.push({
         type: 'radio',
-        question: questionText,
+        question: realQuestion,
         options: options,
         containerSelector: containerSelector,
         elementId: forId,
-        radioName: formElement.name
+        radioName: radioName
       });
     } else if (formElement.type === 'checkbox') {
-      // For checkboxes, group by name to handle multi-select questions
-      const checkboxName = formElement.name;
-      const existingQuestion = questions.find(q => q.checkboxName === checkboxName);
-
-      if (existingQuestion) {
-        // Add option to existing multi-checkbox question
-        existingQuestion.options.push(questionText);
-        existingQuestion.checkboxIds.push(forId);
-      } else {
-        // Find the main question text by traversing up the DOM tree
-        let mainQuestionText = questionText;
-        let currentElement = container;
-
-        // Look for the main question in parent elements (up to 5 levels)
-        for (let i = 0; i < 5; i++) {
-          if (!currentElement || !currentElement.parentElement) break;
-          currentElement = currentElement.parentElement;
-
-          // Look for strong text that's different from the option text
-          const strongElements = currentElement.querySelectorAll('strong');
-          for (const strongEl of strongElements) {
-            const strongText = strongEl.textContent.trim();
-            // Check if this looks like a main question (longer than option text and contains question words)
-            if (strongText.length > questionText.length &&
-                strongText !== questionText &&
-                (strongText.includes('?') || strongText.includes('following') || strongText.includes('which'))) {
-              mainQuestionText = strongText;
-              break;
-            }
-          }
-          if (mainQuestionText !== questionText) break;
-        }
-
-        // Assign unique ID to the main question container for targeting
-        const mainQuestionId = `checkbox-group-${questionCounter++}`;
-        if (currentElement) {
-          currentElement.id = mainQuestionId;
-        }
-
-        questions.push({
-          type: 'checkbox',
-          question: mainQuestionText,
-          options: [questionText],
-          containerSelector: `#${mainQuestionId}`,
-          elementId: forId,
-          checkboxName: checkboxName,
-          checkboxIds: [forId]
-        });
-      }
+      // Handled by the checkbox-group pass below — skip here to avoid duplicates
+      return;
     }
   });
 
@@ -167,23 +177,8 @@ function extractEmployerQuestions() {
     const group = checkboxGroups[name];
     if (group.checkboxes.length === 0) return;
 
-    // Find the main question text by looking for strong elements near the first checkbox
-    let mainQuestion = '';
-    let currentElement = group.checkboxes[0];
-
-    // Look up the DOM tree for the main question
-    for (let i = 0; i < 10; i++) {
-      currentElement = currentElement.parentElement;
-      if (!currentElement) break;
-
-      const strongEl = currentElement.querySelector('strong');
-      if (strongEl) {
-        const text = strongEl.textContent.trim();
-        if (text.length > mainQuestion.length && (text.includes('?') || text.includes('following'))) {
-          mainQuestion = text;
-        }
-      }
-    }
+    // Find the main question text using the group label helper
+    var mainQuestion = findGroupLabel(group.checkboxes[0], group.options);
 
     if (mainQuestion && !processedQuestions.has(mainQuestion)) {
       processedQuestions.add(mainQuestion);

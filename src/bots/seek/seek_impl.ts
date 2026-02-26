@@ -1,4 +1,4 @@
-import { WebDriver, By } from 'selenium-webdriver';
+import { WebDriver, By, until } from 'selenium-webdriver';
 import { setupChromeDriver } from '../core/browser_manager';
 import { HumanBehavior, StealthFeatures, DEFAULT_HUMANIZATION } from '../core/humanization';
 import { UniversalSessionManager, SessionConfigs } from '../core/sessionManager';
@@ -169,7 +169,8 @@ function build_search_url(base_url: string, keywords: string, location: string):
 // Step 0: Initialize Context
 export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   const selectors = JSON.parse(fs.readFileSync(path.join(__dirname, 'config/seek_selectors.json'), 'utf8'));
-  const config = JSON.parse(fs.readFileSync(path.join(__dirname, '../user-bots-config.json'), 'utf8'));
+  const { readUserConfig } = await import('../core/user-config.js');
+  const config = readUserConfig();
 
   ctx.selectors = selectors;
   ctx.config = config;
@@ -408,7 +409,9 @@ export async function* clickJobCard(ctx: WorkflowContext): AsyncGenerator<string
       "const t = (arguments[0].textContent || '').trim(); return t.length > 70 ? t.substring(0, 70) + '...' : t;",
       cards[index]
     )) as string;
-    printLog(`\n📌 Opening job card ${index + 1}/${total}: ${snippet || '(no text)'}`);
+    printLog(`\n${'─'.repeat(60)}`);
+    printLog(`📌 Opening job card ${index + 1}/${total}: ${snippet || '(no text)'}`);
+    printLog(`🖱️ Clicking job card to load details panel...`);
 
     await ctx.driver.executeScript("arguments[0].scrollIntoView(true);", cards[index]);
     await cards[index].click();
@@ -416,6 +419,7 @@ export async function* clickJobCard(ctx: WorkflowContext): AsyncGenerator<string
     ctx.job_index = index + 1;
     yield "job_card_clicked";
   } catch {
+    printLog(`⚠️ Could not click job card ${index + 1}/${total} — skipping`);
     ctx.job_index = index + 1;
     yield "job_card_skipped";
   }
@@ -477,22 +481,21 @@ export async function* detectApplyType(ctx: WorkflowContext): AsyncGenerator<str
     ctx.currentJobTitlePreview = result?.jobTitle || '';
     ctx.currentJobCompanyPreview = result?.companyName || '';
     if (ctx.currentJobTitlePreview || ctx.currentJobCompanyPreview) {
-      printLog(`📋 Job: ${ctx.currentJobTitlePreview || '?'} at ${ctx.currentJobCompanyPreview || '?'}`);
+      printLog(`📋 Job preview: ${ctx.currentJobTitlePreview || '?'} at ${ctx.currentJobCompanyPreview || '?'}`);
     }
-    printLog(`Apply detection result: Quick=${result.hasQuickApply}, Regular=${result.hasRegularApply}`);
 
     if (result.hasQuickApply) {
-      printLog("🚀 QUICK APPLY detected - proceeding with application");
+      printLog("🚀 'Quick Apply' button found — will click to open application form");
       yield "quick_apply_found";
     } else if (result.hasRegularApply) {
-      printLog("⏭️ REGULAR APPLY detected - skipping to next job card");
+      printLog("⏭️ Only regular 'Apply' button found — skipping (Quick Apply only)");
       yield "regular_apply_found";
     } else {
-      printLog("❌ NO APPLY BUTTON detected - skipping to next job card");
+      printLog("❌ No apply button found on this job card — skipping");
       yield "no_apply_found";
     }
   } catch (error) {
-    printLog(`Apply detection error: ${error}`);
+    printLog(`💥 Apply button detection error: ${error}`);
     yield "detect_apply_failed";
   }
 }
@@ -730,10 +733,11 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
       ctx.currentJobFile = filepath;
       ctx.currentJobDir = jobDir;
 
-      printLog(`\n═══════════════════════════════════════════════════════════════`);
+      printLog(`\n${'═'.repeat(63)}`);
       printLog(`🎯 APPLYING TO: ${ctx.currentJobTitle} | ${ctx.currentJobCompany}`);
-      printLog(`═══════════════════════════════════════════════════════════════\n`);
-      printLog(`Quick Apply job saved: ${jobData.title} at ${jobData.company} (${filepath})`);
+      printLog(`${'═'.repeat(63)}\n`);
+      printLog(`💾 Job details saved to: ${filepath}`);
+      printLog(`➡️ Next: uploading resume, then filling cover letter, then clicking Continue`);
 
       // Update progress counter and overlay
       if (ctx.overlay && ctx.total_jobs) {
@@ -746,12 +750,12 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
         );
       }
     } else {
-      printLog("Quick Apply job found but failed to extract data");
+      printLog("⚠️ Job card found but failed to extract job details");
     }
 
     yield "job_parsed";
   } catch (error) {
-    printLog(`Job parsing error: ${error}`);
+    printLog(`💥 Job details parsing error: ${error}`);
     yield "parse_failed";
   }
 }
@@ -760,7 +764,7 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
 export async function* clickQuickApply(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     logCurrentJob(ctx);
-    printLog("Clicking Quick Apply button...");
+    printLog("🖱️ Clicking 'Quick Apply' button to open application form...");
 
     const clicked = await ctx.driver.executeScript(`
       const container = document.querySelector('[data-automation="jobDetailsPage"]') || document.body;
@@ -807,20 +811,19 @@ export async function* clickQuickApply(ctx: WorkflowContext): AsyncGenerator<str
       // Check if a new window/tab opened
       const handles = await ctx.driver.getAllWindowHandles();
       if (handles.length > 1) {
-        // Switch to the new tab (last one opened)
         await ctx.driver.switchTo().window(handles[handles.length - 1]);
-        printLog("Switched to Quick Apply tab");
+        printLog("↗️ Quick Apply opened in a new tab — switched to it");
       }
 
-      printLog("Quick Apply button clicked successfully");
+      printLog("✅ 'Quick Apply' button clicked — application form should be loading");
       yield "quick_apply_clicked";
     } else {
-      printLog("Quick Apply button not found or not clickable");
+      printLog("❌ 'Quick Apply' button not found or not clickable");
       yield "quick_apply_failed";
     }
 
   } catch (error) {
-    printLog(`Error clicking Quick Apply: ${error}`);
+    printLog(`💥 Error clicking 'Quick Apply': ${error}`);
     yield "quick_apply_failed";
   }
 }
@@ -828,14 +831,13 @@ export async function* clickQuickApply(ctx: WorkflowContext): AsyncGenerator<str
 // Wait for Quick Apply Page to Load
 export async function* waitForQuickApplyPage(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
-    printLog("Waiting for Quick Apply page to load...");
+    printLog("⏳ Waiting for Quick Apply application form to load...");
 
     // Wait for page navigation and new elements to appear
     await ctx.driver.sleep(3000);
 
-    // Check current URL to see if we're on a Quick Apply page
     const currentUrl = await ctx.driver.getCurrentUrl();
-    printLog(`Current URL: ${currentUrl}`);
+    printLog(`🌐 Current URL: ${currentUrl}`);
 
     // Try multiple checks with retries
     let pageReady = false;
@@ -872,21 +874,21 @@ export async function* waitForQuickApplyPage(ctx: WorkflowContext): AsyncGenerat
       if (pageReady) break;
 
       if (attempt < 2) {
-        printLog(`Page not ready, attempt ${attempt + 1}/3, waiting...`);
+        printLog(`⏳ Application form not ready yet (attempt ${attempt + 1}/3) — waiting 2 s...`);
         await ctx.driver.sleep(2000);
       }
     }
 
     if (pageReady) {
-      printLog("Quick Apply page loaded successfully");
+      printLog("✅ Quick Apply application form loaded — proceeding to detect current step");
       yield "quick_apply_page_ready";
     } else {
-      printLog("Quick Apply page not ready after retries");
+      printLog("❌ Quick Apply application form did not load after 3 attempts — closing");
       yield "page_load_timeout";
     }
 
   } catch (error) {
-    printLog(`Quick Apply page load error: ${error}`);
+    printLog(`💥 Error waiting for Quick Apply form: ${error}`);
     yield "page_load_timeout";
   }
 }
@@ -895,36 +897,58 @@ export async function* waitForQuickApplyPage(ctx: WorkflowContext): AsyncGenerat
 export async function* getCurrentStep(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     logCurrentJob(ctx);
-    const currentStep = await ctx.driver.executeScript(`
+    printLog("🔍 Reading Quick Apply progress bar to determine current step...");
+    const result = await ctx.driver.executeScript(`
       const nav = document.querySelector('nav[aria-label="Progress bar"]');
-      if (!nav) return 'progress_bar_not_found';
+      if (!nav) return { current: 'progress_bar_not_found', allSteps: [] };
+
+      const getStepText = btn => btn.querySelector('span:nth-child(2) span:nth-child(2) span span')?.textContent?.trim() || '';
+
+      const allSteps = Array.from(nav.querySelectorAll('li button')).map(getStepText).filter(s => s);
 
       const currentStepBtn = nav.querySelector('li button[aria-current="step"]');
-      if (!currentStepBtn) return 'progress_bar_not_found';
+      if (!currentStepBtn) return { current: 'progress_bar_not_found', allSteps };
 
-      const stepText = currentStepBtn.querySelector('span:nth-child(2) span:nth-child(2) span span')?.textContent?.trim() || '';
-      return stepText;
+      return { current: getStepText(currentStepBtn), allSteps };
     `);
 
-    printLog(`Current Quick Apply step: ${currentStep}`);
+    const currentStep: string = result?.current ?? 'progress_bar_not_found';
+    const allSteps: string[] = result?.allSteps ?? [];
+
+    // Persist the full step list to job_details.json so the analytics page can display it
+    if (allSteps.length > 0 && ctx.currentJobFile) {
+      try {
+        const jobData = JSON.parse(fs.readFileSync(ctx.currentJobFile, 'utf8'));
+        if (!jobData.applicationSteps) {
+          jobData.applicationSteps = allSteps;
+          fs.writeFileSync(ctx.currentJobFile, JSON.stringify(jobData, null, 2));
+          printLog(`💾 Saved application steps: ${allSteps.join(' → ')}`);
+        }
+      } catch { /* non-fatal */ }
+    }
 
     if (currentStep === 'progress_bar_not_found') {
+      printLog("⚠️ Progress bar not found — assuming 'Choose documents' step");
       yield "progress_bar_not_found";
     } else if (currentStep === "Choose documents") {
+      printLog(`📍 Current step: '${currentStep}' → will upload resume then fill cover letter`);
       yield "current_step_choose_documents";
     } else if (currentStep === "Answer employer questions") {
+      printLog(`📍 Current step: '${currentStep}' → will answer employer questions`);
       yield "current_step_employer_questions";
     } else if (currentStep === "Update SEEK Profile") {
+      printLog(`📍 Current step: '${currentStep}' → skipping (profile update not automated)`);
       yield "current_step_update_profile";
     } else if (currentStep === "Review and submit") {
+      printLog(`📍 Current step: '${currentStep}' → skipping (manual review required)`);
       yield "current_step_review_submit";
     } else {
-      printLog(`Unknown step: ${currentStep}`);
+      printLog(`⚠️ Unknown step: '${currentStep}' — closing application`);
       yield "current_step_unknown";
     }
 
   } catch (error) {
-    printLog(`Error getting current step: ${error}`);
+    printLog(`💥 Error reading progress bar: ${error}`);
     yield "progress_bar_evaluation_error";
   }
 }
@@ -936,82 +960,241 @@ export async function* getCurrentStep(ctx: WorkflowContext): AsyncGenerator<stri
 export async function* clickContinueButton(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     logCurrentJob(ctx);
-    printLog("Clicking continue button...");
 
-    // First, check the form state before clicking continue
+    // Snapshot form state so we can diagnose failures
+    printLog("🔍 Checking form state before clicking 'Continue'...");
     const formState = await ctx.driver.executeScript(`
-      // Check cover letter state
       const textarea = document.querySelector('textarea[data-testid="coverLetterTextInput"]');
-      const coverLetterValue = textarea ? textarea.value : 'NOT_FOUND';
       const coverLetterLength = textarea ? textarea.value.length : 0;
-
-      // Check for any validation errors
       const errorElements = document.querySelectorAll('[role="alert"], .error, .invalid, [aria-invalid="true"]');
-      const hasErrors = errorElements.length > 0;
       const errorMessages = Array.from(errorElements).map(el => el.textContent.trim()).filter(txt => txt);
-
-      // Check if continue button is enabled
       const continueBtn = document.querySelector('button[data-testid="continue-button"]');
-      const btnEnabled = continueBtn ? !continueBtn.disabled : false;
-
       return {
-        coverLetterLength: coverLetterLength,
-        coverLetterPreview: coverLetterValue.substring(0, 50),
-        hasErrors: hasErrors,
-        errorMessages: errorMessages,
-        continueButtonEnabled: btnEnabled
+        coverLetterLength,
+        hasErrors: errorElements.length > 0,
+        errorMessages,
+        continueButtonExists: !!continueBtn,
+        continueButtonEnabled: continueBtn ? !continueBtn.disabled : false
       };
     `);
-
-    printLog(`📋 FORM STATE CHECK: Cover letter length: ${formState.coverLetterLength}, Errors: ${formState.hasErrors}, Continue enabled: ${formState.continueButtonEnabled}`);
+    printLog(`📋 Form state — cover letter: ${formState.coverLetterLength} chars, errors: ${formState.hasErrors}, Continue enabled: ${formState.continueButtonEnabled}`);
     if (formState.hasErrors) {
-      printLog(`🔥 VALIDATION ERRORS: ${formState.errorMessages.join(', ')}`);
+      printLog(`⚠️ Validation errors on page: ${formState.errorMessages.join(' | ')}`);
     }
 
-    const continueClicked = await ctx.driver.executeScript(`
-      const continueSelectors = [
-        'button[data-testid="continue-button"]',
-        'button:contains("Continue")',
-        'button:contains("Next")'
-      ];
+    // Locate the Continue button (it's always in the DOM, so this should be fast)
+    printLog("➡️ Locating 'Continue' button (data-testid=\"continue-button\")...");
+    let continueBtn;
+    try {
+      continueBtn = await ctx.driver.wait(
+        until.elementLocated(By.css('button[data-testid="continue-button"]')),
+        5000,
+        'Continue button not found within 5 s'
+      );
+      printLog("✅ 'Continue' button located in DOM");
+    } catch (locateErr) {
+      // Button not found by testid — try text scan as last resort
+      printLog(`⚠️ 'Continue' button not found by data-testid (${locateErr}) — scanning by text...`);
+      const fallbackClicked = await ctx.driver.executeScript(`
+        const btn = Array.from(document.querySelectorAll('button')).find(b =>
+          b.offsetParent !== null && !b.disabled &&
+          /^(continue|next)$/i.test((b.textContent || '').trim())
+        );
+        if (btn) { btn.scrollIntoView({block:'center'}); btn.click(); return true; }
+        return false;
+      `);
+      if (fallbackClicked) {
+        printLog("✅ 'Continue' button clicked via text fallback");
+        await ctx.driver.sleep(2000);
+        yield "continue_clicked";
+      } else {
+        printLog("❌ 'Continue' button not found by any strategy");
+        yield "continue_button_not_found";
+      }
+      return;
+    }
 
-      for (const selector of continueSelectors) {
-        let button;
-        if (selector.includes(':contains')) {
-          const text = selector.match(/contains\\(\"([^\"]+)\"\\)/)[1];
-          const buttons = Array.from(document.querySelectorAll('button')).filter(btn =>
-            btn.textContent.toLowerCase().includes(text.toLowerCase())
-          );
-          button = buttons.find(btn => btn.offsetParent !== null && !btn.disabled);
-        } else {
-          button = document.querySelector(selector);
-        }
+    // Wait for the button to become enabled — React may still be running async form
+    // validation after sendKeys() returns, keeping the button disabled for a moment.
+    printLog("⏳ Waiting for 'Continue' button to become enabled (React validation)...");
+    try {
+      await ctx.driver.wait(
+        until.elementIsEnabled(continueBtn),
+        10000,
+        'Continue button did not become enabled within 10 s'
+      );
+      printLog("✅ 'Continue' button is enabled");
+    } catch {
+      printLog("⚠️ Continue button still appears disabled after 10 s — attempting click anyway");
+    }
 
-        if (button && button.offsetParent !== null && !button.disabled) {
-          button.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          setTimeout(() => {
-            button.click();
-            console.log('Continue button clicked');
-          }, 300);
-          return true;
+    // Scroll into view and let any scroll animation settle
+    await ctx.driver.executeScript('arguments[0].scrollIntoView({block:"center"});', continueBtn);
+    await ctx.driver.sleep(400);
+
+    // Retry native click up to 3 times — handles transient ElementClickInterceptedError
+    // (tooltips, dropdowns, or scroll overlays briefly covering the button)
+    let clicked = false;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        printLog(`➡️ Clicking 'Continue' button (attempt ${attempt}/3)...`);
+        await continueBtn.click();
+        clicked = true;
+        printLog("✅ 'Continue' button clicked successfully");
+        break;
+      } catch (clickErr: any) {
+        const msg = String(clickErr?.message || clickErr);
+        printLog(`⚠️ Click attempt ${attempt}/3 failed: ${msg}`);
+        if (attempt < 3) {
+          // Re-scroll and wait for any intercepting element to clear
+          await ctx.driver.executeScript('arguments[0].scrollIntoView({block:"center"});', continueBtn);
+          await ctx.driver.sleep(600 * attempt);
         }
       }
-
-      return false;
-    `);
-
-    if (continueClicked) {
-      await ctx.driver.sleep(2000); // Wait for navigation/page change
-      printLog("Continue button clicked successfully");
-      yield "continue_clicked";
-    } else {
-      printLog("Continue button not found");
-      yield "continue_button_not_found";
     }
 
+    if (!clicked) {
+      // All native attempts failed — JS click as absolute last resort
+      printLog("⚠️ All native click attempts failed — trying JS click fallback...");
+      const jsClicked = await ctx.driver.executeScript(`
+        const btn = document.querySelector('button[data-testid="continue-button"]')
+          || Array.from(document.querySelectorAll('button')).find(b =>
+              b.offsetParent !== null && !b.disabled &&
+              /^(continue|next)$/i.test((b.textContent || '').trim())
+            );
+        if (btn) { btn.scrollIntoView({block:'center'}); btn.click(); return true; }
+        return false;
+      `);
+      if (!jsClicked) {
+        printLog("❌ 'Continue' button not clickable by any strategy");
+        yield "continue_button_not_found";
+        return;
+      }
+      printLog("✅ JS fallback click succeeded");
+    }
+
+    printLog("⏳ Waiting for page transition after 'Continue'...");
+    await ctx.driver.sleep(2000);
+    yield "continue_clicked";
+
   } catch (error) {
-    printLog(`Continue button error: ${error}`);
+    printLog(`💥 Continue button error: ${error}`);
     yield "continue_button_error";
+  }
+}
+
+// Handle Review and Submit — clicks the "Submit application" button and writes applied status locally
+export async function* handleReviewAndSubmit(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  try {
+    printLog("📋 On Review & Submit step — locating 'Submit application' button...");
+
+    // Try data-testid first, then text-based fallback
+    let submitBtn: any = null;
+    try {
+      submitBtn = await ctx.driver.wait(
+        until.elementLocated(By.css('button[data-testid="submit-button"]')),
+        5000,
+        'Submit button not found by data-testid within 5 s'
+      );
+      printLog("✅ Submit button located by data-testid");
+    } catch {
+      printLog("⚠️ Submit button not found by data-testid — scanning by text...");
+      const btnId: string | null = await ctx.driver.executeScript(`
+        const btn = Array.from(document.querySelectorAll('button')).find(b =>
+          b.offsetParent !== null && !b.disabled &&
+          /submit\\s*application/i.test((b.textContent || '').trim())
+        );
+        if (btn) {
+          if (!btn.id) btn.id = 'seek-submit-btn-' + Date.now();
+          return btn.id;
+        }
+        return null;
+      `);
+      if (btnId) {
+        submitBtn = await ctx.driver.findElement(By.css(`button[id="${btnId}"]`));
+        printLog("✅ Submit button located by text scan");
+      }
+    }
+
+    if (!submitBtn) {
+      printLog("❌ Could not locate submit button — closing without submitting");
+      yield "submit_failed";
+      return;
+    }
+
+    // Wait for button to be enabled
+    try {
+      await ctx.driver.wait(until.elementIsEnabled(submitBtn), 8000, 'Submit button not enabled within 8 s');
+    } catch {
+      printLog("⚠️ Submit button still appears disabled — attempting click anyway");
+    }
+
+    await ctx.driver.executeScript('arguments[0].scrollIntoView({block:"center"});', submitBtn);
+    await ctx.driver.sleep(400);
+
+    // Click with retries
+    let clicked = false;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        printLog(`➡️ Clicking Submit button (attempt ${attempt}/3)...`);
+        await submitBtn.click();
+        clicked = true;
+        printLog("✅ Submit button clicked");
+        break;
+      } catch (clickErr: any) {
+        printLog(`⚠️ Click attempt ${attempt}/3 failed: ${clickErr?.message || clickErr}`);
+        if (attempt < 3) {
+          await ctx.driver.executeScript('arguments[0].scrollIntoView({block:"center"});', submitBtn);
+          await ctx.driver.sleep(600 * attempt);
+        }
+      }
+    }
+
+    if (!clicked) {
+      printLog("⚠️ Native clicks failed — trying JS click fallback...");
+      const jsClicked = await ctx.driver.executeScript(`
+        const btn = document.querySelector('button[data-testid="submit-button"]')
+          || Array.from(document.querySelectorAll('button')).find(b =>
+              b.offsetParent !== null && !b.disabled &&
+              /submit\\s*application/i.test((b.textContent || '').trim())
+            );
+        if (btn) { btn.scrollIntoView({block:'center'}); btn.click(); return true; }
+        return false;
+      `);
+      if (!jsClicked) {
+        printLog("❌ Submit button not clickable by any strategy");
+        yield "submit_failed";
+        return;
+      }
+      printLog("✅ JS fallback click succeeded");
+    }
+
+    // Wait for the confirmation page/overlay
+    printLog("⏳ Waiting for submission confirmation...");
+    await ctx.driver.sleep(3000);
+
+    // Write applied status to local job dir
+    try {
+      if (ctx.currentJobFile) {
+        const jobData = JSON.parse(fs.readFileSync(ctx.currentJobFile, 'utf8'));
+        const jobId = jobData.jobId || '';
+        if (jobId) {
+          const jobDir = getJobArtifactDir(ctx, 'seek', jobId);
+          const statusPath = path.join(jobDir, 'application_status.json');
+          fs.writeFileSync(statusPath, JSON.stringify({ status: 'applied', appliedAt: new Date().toISOString() }, null, 2));
+          printLog(`💾 Application status saved: applied → ${statusPath}`);
+        }
+      }
+    } catch (writeErr) {
+      printLog(`⚠️ Could not write application status (continuing): ${writeErr}`);
+    }
+
+    printLog("🎉 Application submitted successfully");
+    yield "application_submitted";
+
+  } catch (error) {
+    printLog(`💥 Review & submit error: ${error}`);
+    yield "submit_failed";
   }
 }
 
@@ -1230,6 +1413,7 @@ export const seekStepFunctions = {
   extractEmployerQuestions,
   handleEmployerQuestions,
   clickContinueButton,
+  handleReviewAndSubmit,
   closeQuickApplyAndContinueSearch,
   stayPutForInspection,
   pauseForCoverLetterReview,

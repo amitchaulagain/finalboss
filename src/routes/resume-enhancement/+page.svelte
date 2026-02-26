@@ -218,9 +218,8 @@
 
       let preferredResumeFileName = '';
       try {
-        const configContent = await invoke<string>('read_file_async', {
-          filename: 'src/bots/user-bots-config.json'
-        });
+        const configPath = await invoke<string>('get_app_config_path');
+        const configContent = await invoke<string>('read_file_async', { filename: configPath });
         const parsed = JSON.parse(configContent);
         preferredResumeFileName = String(parsed?.formData?.resumeFileName || '').trim();
       } catch {

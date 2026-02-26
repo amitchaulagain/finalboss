@@ -25,6 +25,8 @@ export interface JobApplicationPayload {
   platformJobId: string;
   title: string;
   company: string;
+  /** Application status. 'pending' = bot filled the form but did not click the final Submit button. */
+  status?: 'pending' | 'applied' | 'rejected' | 'interview' | 'offer';
   url?: string;
   description?: string;
   location?: string;
@@ -48,6 +50,8 @@ export interface JobApplicationPayload {
       type?: string;
       options?: string[];
       selected?: number | string | string[] | null;
+      status?: string;
+      answerSource?: string;
     }>;
     apiCalls?: ApiCallTokenRecord[];
   };
@@ -75,14 +79,8 @@ function readJsonFile(filePath: string): any | null {
   }
 }
 
-function getCandidateJobDirs(primaryDir: string, platform: 'seek' | 'linkedin' | 'indeed' | 'other', jobId: string): string[] {
-  const dirs = [primaryDir];
-  if (platform === 'linkedin') {
-    dirs.push(path.join(process.cwd(), 'jobs', 'linkedinjobs', jobId));
-  } else if (platform === 'seek') {
-    dirs.push(path.join(process.cwd(), 'src', 'bots', 'jobs', jobId));
-  }
-  return Array.from(new Set(dirs));
+function getCandidateJobDirs(primaryDir: string): string[] {
+  return [primaryDir];
 }
 
 function readJsonFromDirs(jobDirs: string[], filename: string): any | null {
@@ -127,6 +125,8 @@ function normalizeQuestionAnswer(item: any): {
   type?: string;
   options?: string[];
   selected?: number | string | string[] | null;
+  status?: string;
+  answerSource?: string;
 } | null {
   const question = typeof item?.question === 'string'
     ? item.question
@@ -155,8 +155,18 @@ function normalizeQuestionAnswer(item: any): {
   const selected = item?.selected ?? null;
   const type = typeof item?.type === 'string' ? item.type : undefined;
 
+  const status = typeof item?.status === 'string' ? item.status : undefined;
+  const answerSource = typeof item?.answerSource === 'string' ? item.answerSource : undefined;
   if (!question && !answer) return null;
-  return { question: question.trim(), answer, ...(type ? { type } : {}), ...(options ? { options } : {}), selected };
+  return {
+    question: question.trim(),
+    answer,
+    ...(type ? { type } : {}),
+    ...(options ? { options } : {}),
+    selected,
+    ...(status ? { status } : {}),
+    ...(answerSource ? { answerSource } : {}),
+  };
 }
 
 /**
@@ -168,12 +178,14 @@ function readQuestionAnswers(jobDirs: string[]): Array<{
   type?: string;
   options?: string[];
   selected?: number | string | string[] | null;
+  status?: string;
+  answerSource?: string;
 }> {
   const primary = readJsonFromDirs(jobDirs, 'qna.json');
   const primaryList = (primary?.questions ?? primary?.questionAnswers ?? []) as any[];
   const normalizedPrimary = primaryList
     .map(normalizeQuestionAnswer)
-    .filter((x): x is { question: string; answer: string } => Boolean(x));
+    .filter((x): x is NonNullable<ReturnType<typeof normalizeQuestionAnswer>> => Boolean(x));
   if (normalizedPrimary.length > 0) return normalizedPrimary;
 
   const response = readJsonFromDirs(jobDirs, 'qna_response.json');
@@ -302,7 +314,7 @@ export function buildJobApplicationPayload(input: RecordJobApplicationInput): Jo
     return null;
   }
 
-  const candidateJobDirs = getCandidateJobDirs(jobDirPath, platform, platformJobId);
+  const candidateJobDirs = getCandidateJobDirs(jobDirPath);
   const coverLetter = readCoverLetter(candidateJobDirs);
   const questionAnswers = readQuestionAnswers(candidateJobDirs);
   const { text: tailoredResume, resumeSource, resumePdfPath } = readTailoredResume(candidateJobDirs);
@@ -320,6 +332,7 @@ export function buildJobApplicationPayload(input: RecordJobApplicationInput): Jo
     platformJobId,
     title,
     company,
+    status: 'pending' as const,
     url: jobData.url,
     description: jobData.details || jobData.description,
     location: jobData.location,

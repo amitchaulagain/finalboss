@@ -2,14 +2,26 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { resumesStore, loadResumes, setBase, autoSave } from '$lib/resume/store';
-  import { downloadDocx } from '$lib/resume/generator';
+  import { downloadDocx, saveBaseResumeJsonToDisk } from '$lib/resume/generator';
   import type { ResumeData } from '$lib/resume/types';
-  
+  import { invoke } from '@tauri-apps/api/core';
+
+  let userEmail = '';
+  let settingBaseId: string | null = null;
+
   // Load saved resumes on mount
-  onMount(() => {
+  onMount(async () => {
     loadResumes();
+    try {
+      const configPath = await invoke<string>('get_app_config_path');
+      const raw = await invoke<string>('read_file_async', { filename: configPath });
+      const config = JSON.parse(raw);
+      userEmail = String(config?.formData?.email || config?.email || '').trim();
+    } catch {
+      // email remains empty; saveBaseResumeJsonToDisk will be skipped
+    }
   });
-  
+
   let downloadingId: string | null = null;
   
   async function handleDownload(resume: ResumeData) {
@@ -42,9 +54,20 @@
     }
   }
 
-  function handleSetBase(id: string) {
+  async function handleSetBase(id: string) {
     resumesStore.setBase(id);
     autoSave();
+    if (!userEmail) return;
+    const resume = $resumesStore.find((r) => r.id === id);
+    if (!resume) return;
+    settingBaseId = id;
+    try {
+      await saveBaseResumeJsonToDisk(resume, userEmail);
+    } catch (err) {
+      console.warn('Failed to save base resume to disk:', err);
+    } finally {
+      settingBaseId = null;
+    }
   }
 </script>
 
@@ -113,8 +136,17 @@
                     </button>
                   </li>
                   <li>
-                    <button on:click={() => handleSetBase(resume.id)} class:text-warning={!resume.isBase}>
-                      ★ {resume.isBase ? 'Current Base' : 'Set as Base'}
+                    <button
+                      on:click={() => handleSetBase(resume.id)}
+                      class:text-warning={!resume.isBase}
+                      disabled={settingBaseId === resume.id}
+                    >
+                      {#if settingBaseId === resume.id}
+                        <span class="loading loading-spinner loading-xs"></span>
+                      {:else}
+                        ★
+                      {/if}
+                      {resume.isBase ? 'Current Base' : 'Set as Base'}
                     </button>
                   </li>
                   <li>

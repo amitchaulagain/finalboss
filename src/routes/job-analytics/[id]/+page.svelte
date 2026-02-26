@@ -18,7 +18,13 @@
   /** @type {string} */
   let activeTab = 'Job details';
 
+  /** @type {Array<{question:string,answer:string,type?:string,options?:string[],selected?:any,answerSource?:string,status?:string}> | null} */
+  let localQna = null;
+
   $: id = $page.params.id;
+  $: backendQa = app?.application?.questionAnswers ?? [];
+  $: displayQa = backendQa.length > 0 ? backendQa : (localQna ?? []);
+  $: isLocalQnaSource = backendQa.length === 0 && displayQa.length > 0;
 
   onMount(() => {
     const auth = get(authService);
@@ -54,6 +60,10 @@
       const data = await response.json();
       if (data.success && data.data) {
         app = data.data;
+        // If backend has no Q&A, eagerly try to load from local qna.json
+        if (!app.application?.questionAnswers?.length) {
+          loadLocalQna();
+        }
       } else {
         app = null;
       }
@@ -62,6 +72,62 @@
       app = null;
     } finally {
       isLoading = false;
+    }
+  }
+
+  /**
+   * Parse raw qna.json content into the same shape used by the backend questionAnswers array.
+   * @param {any} raw
+   * @returns {Array<{question:string,answer:string,type?:string,options?:string[],selected?:any,answerSource?:string,status?:string}>}
+   */
+  function parseLocalQna(raw) {
+    const list = raw?.questions ?? raw?.questionAnswers ?? (Array.isArray(raw) ? raw : []);
+    /** @type {Array<{question:string,answer:string,type?:string,options?:string[],selected?:any,answerSource?:string,status?:string}>} */
+    const result = [];
+    for (const item of list) {
+      const question = typeof item?.question === 'string' ? item.question
+        : typeof item?.q === 'string' ? item.q : '';
+
+      let answerValue = item?.answer ?? item?.a ?? item?.textAnswer ?? item?.selectedAnswer;
+      if (typeof answerValue === 'number' && Array.isArray(item?.opts) && item.opts[answerValue]) {
+        answerValue = item.opts[answerValue];
+      }
+      if (typeof answerValue === 'number' && Array.isArray(item?.options) && item.options[answerValue]) {
+        answerValue = item.options[answerValue];
+      }
+      if (Array.isArray(answerValue)) answerValue = answerValue.map((x) => String(x)).join(', ');
+      const answer = typeof answerValue === 'string' ? answerValue.trim() : '';
+
+      if (!question && !answer) continue;
+
+      const options = Array.isArray(item?.options)
+        ? item.options.map((x) => String(x))
+        : Array.isArray(item?.opts)
+          ? item.opts.map((x) => String(x))
+          : undefined;
+
+      result.push({
+        question: question.trim(),
+        answer,
+        ...(typeof item?.type === 'string' ? { type: item.type } : {}),
+        ...(options ? { options } : {}),
+        selected: item?.selected ?? null,
+        ...(typeof item?.answerSource === 'string' ? { answerSource: item.answerSource } : {}),
+        ...(typeof item?.status === 'string' ? { status: item.status } : {}),
+      });
+    }
+    return result;
+  }
+
+  async function loadLocalQna() {
+    const jobDir = app?.rawData?.source?.jobDir;
+    if (!jobDir) return;
+    try {
+      const raw = await invoke('read_file_async', { filename: jobDir + '/qna.json' });
+      const parsed = parseLocalQna(JSON.parse(/** @type {string} */ (raw)));
+      localQna = parsed.length > 0 ? parsed : [];
+    } catch {
+      localQna = [];
     }
   }
 
@@ -175,11 +241,12 @@
     </div>
 
     <!-- Tabs -->
-    <div class="tabs tabs-boxed bg-base-200/50 p-1 rounded-lg mb-6">
+    <div class="flex flex-wrap gap-2 mb-6">
       {#each TABS as tab}
         <button
           type="button"
-          class="tab {activeTab === tab ? 'tab-active' : ''}"
+          class="btn btn-sm font-bold px-6 py-2 {activeTab === tab ? 'btn-primary' : 'border border-base-300'}"
+          style={activeTab !== tab ? 'background-color: #bfdbfe; color: #1e3a5f;' : ''}
           on:click={() => (activeTab = tab)}
         >
           {tab}
@@ -406,12 +473,29 @@
       {:else if activeTab === 'Q&A'}
         <div class="card bg-base-200">
           <div class="card-body">
-            {#if app.application?.questionAnswers && app.application.questionAnswers.length > 0}
-              <h2 class="card-title text-base">Questions & answers</h2>
+            {#if displayQa.length > 0}
+              <div class="flex items-center gap-2 mb-1">
+                <h2 class="card-title text-base">Questions & answers</h2>
+                {#if isLocalQnaSource}
+                  <span class="badge badge-ghost badge-sm">Local file</span>
+                {/if}
+              </div>
               <ul class="space-y-4">
-                {#each app.application.questionAnswers as qa}
+                {#each displayQa as qa}
+                  {@const resolvedAnswer = (typeof qa.answer === 'number' && Array.isArray(qa.options) && qa.options[qa.answer] != null)
+                    ? qa.options[qa.answer]
+                    : qa.answer}
                   <li class="border-l-2 border-base-300 pl-4">
                     <p class="font-medium text-sm mb-1">{qa.question}</p>
+                    {#if qa.status}
+                      {@const badgeClass = qa.status === 'success' ? 'badge-success'
+                        : qa.status === 'failed' ? 'badge-error'
+                        : qa.status === 'skipped' ? 'badge-warning'
+                        : 'badge-ghost'}
+                      <span class="badge badge-xs {badgeClass} mb-1">
+                        {qa.status === 'success' ? 'Filled' : qa.status === 'failed' ? 'Fill failed' : qa.status}
+                      </span>
+                    {/if}
                     {#if qa.options && qa.options.length > 0}
                       <div class="flex flex-wrap gap-2 mb-2">
                         {#each qa.options as option, optionIndex}
@@ -424,8 +508,8 @@
                     {/if}
                     <p class="text-xs text-base-content/60 mb-1">
                       <strong>Answer:</strong>
-                      {#if qa.answer}
-                        {qa.answer}
+                      {#if resolvedAnswer}
+                        {resolvedAnswer}
                       {:else}
                         —
                       {/if}

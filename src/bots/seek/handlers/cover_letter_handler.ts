@@ -6,6 +6,42 @@ const printLog = (message: string) => {
   console.log(message);
 };
 
+/**
+ * Replaces the name that appears on the line(s) immediately after a closing
+ * salutation (e.g. "Yours sincerely,", "Kind regards,") with `correctName`.
+ * This is a safety net for when the AI copies the old name from the resume text
+ * instead of using the name supplied in the prompt.
+ */
+function fixSignOffName(text: string, correctName: string): string {
+  if (!correctName) return text;
+
+  const closingPhrases = [
+    'yours sincerely', 'yours faithfully', 'sincerely yours', 'sincerely',
+    'kind regards', 'warm regards', 'best regards', 'regards',
+    'with regards', 'many thanks', 'thank you', 'yours truly',
+  ];
+
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const lower = lines[i].trim().toLowerCase().replace(/,\s*$/, '');
+    if (closingPhrases.includes(lower)) {
+      // Replace all non-empty name lines that immediately follow the salutation
+      let j = i + 1;
+      // Skip any blank line between salutation and name
+      while (j < lines.length && lines[j].trim() === '') j++;
+      if (j < lines.length && lines[j].trim() !== '') {
+        const oldName = lines[j].trim();
+        if (oldName !== correctName) {
+          printLog(`📝 Sign-off name corrected: "${oldName}" → "${correctName}"`);
+          lines[j] = lines[j].replace(oldName, correctName);
+        }
+      }
+      break;
+    }
+  }
+  return lines.join('\n');
+}
+
 function stripMarkdown(text: string): string {
   return text
     .replace(/^#{1,6}\s+/gm, '')           // headings
@@ -64,6 +100,11 @@ async function resolveResumeText(ctx: WorkflowContext): Promise<string> {
   return content;
 }
 
+async function readFreshUserConfig(): Promise<Record<string, any>> {
+  const { readUserConfig } = await import('../../core/user-config.js');
+  return readUserConfig();
+}
+
 async function generateAICoverLetter(ctx: WorkflowContext): Promise<string> {
   const fs = await import('fs');
   const path = await import('path');
@@ -82,12 +123,16 @@ async function generateAICoverLetter(ctx: WorkflowContext): Promise<string> {
   printLog(`📝 Job: ${jobData.title} at ${jobData.company}`);
 
   const resumeText = await resolveResumeText(ctx);
-  const formData = ((ctx as any)?.config?.formData || {}) as Record<string, string>;
+
+  // Always read fresh config from disk so changes made after bot start are picked up
+  const freshConfig = await readFreshUserConfig();
+  const formData = (freshConfig?.formData || (ctx as any)?.config?.formData || {}) as Record<string, string>;
   const contactProfile = {
     full_name: String(formData.fullName || '').trim(),
     email: String(formData.email || getClientEmailFromContext(ctx) || '').trim(),
     phone: String(formData.phone || '').trim()
   };
+  printLog(`👤 Contact profile: ${contactProfile.full_name} <${contactProfile.email}> ${contactProfile.phone}`);
 
   const requestBody = {
     job_id: `seek_${jobId}`,
@@ -98,6 +143,11 @@ async function generateAICoverLetter(ctx: WorkflowContext): Promise<string> {
     qualityThreshold: 92,
     strictQualityRetries: 1,
     contact_profile: contactProfile,
+
+    // Disable RAG so the backend never returns a stale cached answer and never
+    // retrieves old resume chunks that were auto-ingested from previous runs.
+    // The full resume_text is already supplied above, so RAG adds no value here.
+    useRag: false,
 
     // Required tracking fields per API docs
     platform: "seek",
@@ -113,6 +163,7 @@ STRICT RULES — these override everything else:
 - Only reference experiences, skills, and achievements that are explicitly stated in the provided resume
 - Do NOT fabricate projects, companies, dates, or accomplishments
 - Do NOT include a LinkedIn URL or any other URL anywhere in the letter
+- The sender's full name is "${contactProfile.full_name}". Use this EXACT name — and only this name — in the closing signature. Do not use any other name from the resume.
 
 Highlight relevant experience and skills that match the job requirements.
 Keep it concise (300-400 words) and personalized to ${jobData.company || 'the company'}.
@@ -148,9 +199,8 @@ Focus on demonstrating value and enthusiasm for the role.`
   }
 
   if (data.cover_letter) {
-    printLog("✅ AI cover letter generated");
-    const coverLetter = stripMarkdown(data.cover_letter);
-    printLog(`📄 Length: ${coverLetter.length} chars`);
+    const coverLetter = fixSignOffName(stripMarkdown(data.cover_letter), contactProfile.full_name);
+    printLog(`✅ AI cover letter received from API (${coverLetter.length} chars)`);
     return coverLetter;
   } else {
     printLog(`❌ API response missing cover_letter field. Response: ${JSON.stringify(data)}`);
@@ -161,43 +211,53 @@ Focus on demonstrating value and enthusiasm for the role.`
 // Handle Cover Letter (part of Choose Documents step) - Improved from Python version
 export async function* handleCoverLetter(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
-    printLog("Handling cover letter...");
+    printLog("\n--- Step: Fill Cover Letter ---");
+    printLog("🔍 Looking for cover letter radio button to enable text input...");
 
-    // Step 1: Click cover letter radio button (improved from Python version)
-    const radioClicked = await ctx.driver.executeScript(`
+    // Step 1: Click cover letter radio button (distinguish "not found" from "already checked")
+    const radioState: string = await ctx.driver.executeScript(`
       const coverLetterRadio = document.querySelector('input[data-testid="coverLetter-method-change"]');
-      if (coverLetterRadio && !coverLetterRadio.checked) {
-        // Use improved click strategy from Python
-        coverLetterRadio.click();
-        coverLetterRadio.checked = true;
-
-        // Dispatch change event
-        const changeEvent = new Event('change', { bubbles: true });
-        coverLetterRadio.dispatchEvent(changeEvent);
-
-        // Dispatch click event
-        const clickEvent = new Event('click', { bubbles: true });
-        coverLetterRadio.dispatchEvent(clickEvent);
-
-        console.log('Cover letter radio clicked successfully');
-        return true;
-      }
-      return false;
+      if (!coverLetterRadio) return 'not_found';
+      if (coverLetterRadio.checked) return 'already_checked';
+      coverLetterRadio.click();
+      coverLetterRadio.checked = true;
+      coverLetterRadio.dispatchEvent(new Event('change', { bubbles: true }));
+      console.log('Cover letter radio clicked successfully');
+      return 'just_clicked';
     `);
 
-    if (!radioClicked) {
-      printLog("Cover letter radio not found or already selected");
+    if (radioState === 'not_found') {
+      printLog("⚠️ Cover letter radio button not found — cover letter may not be required for this job");
       yield "cover_letter_not_required";
       return;
     }
 
-    printLog("Cover letter radio clicked successfully");
+    printLog(`✅ Cover letter radio state: ${radioState}`);
 
-    // Step 2: Wait for textarea to appear (outside executeScript like Python)
+    // Step 2: Wait for textarea to appear
     await ctx.driver.sleep(1000);
 
-    // Step 3: Use Selenium's sendKeys for human-like typing instead of executeScript
-    await ctx.driver.sleep(500); // Let radio button change settle
+    // If the radio was already checked, check whether the textarea already has content
+    if (radioState === 'already_checked') {
+      const existingLength: number = await ctx.driver.executeScript(`
+        const ta = document.querySelector('textarea[data-testid="coverLetterTextInput"]');
+        return ta ? ta.value.length : -1;
+      `);
+      if (existingLength === -1) {
+        printLog("⚠️ Radio was pre-checked but no textarea found — cover letter not required");
+        yield "cover_letter_not_required";
+        return;
+      }
+      if (existingLength > 50) {
+        printLog(`✅ Cover letter textarea already has content (${existingLength} chars) — skipping fill`);
+        yield "cover_letter_filled";
+        return;
+      }
+      printLog(`⚠️ Cover letter radio was pre-checked but textarea is empty — filling it`);
+    }
+
+    // Step 3: Let radio button state settle before interacting with the textarea
+    await ctx.driver.sleep(500);
 
     let textareaResult;
 
@@ -211,90 +271,72 @@ export async function* handleCoverLetter(ctx: WorkflowContext): AsyncGenerator<s
       await textarea.clear();
       printLog("✅ Step 2: Content cleared successfully");
 
-      // Generate AI-powered cover letter based on job description
-      printLog("🔍 Step 3: Generating AI cover letter - this MUST succeed, no fallbacks!");
+      printLog("🤖 Generating AI cover letter via POST /api/cover_letter ...");
       const coverLetterText = await generateAICoverLetter(ctx);
-      printLog("✅ Step 3: AI cover letter generated successfully");
+      printLog("✅ AI cover letter received from API");
 
       if (!coverLetterText || coverLetterText.trim().length < 50) {
         throw new Error(`Generated cover letter is too short: ${coverLetterText?.length || 0} chars`);
       }
 
-      // Use sendKeys to simulate human typing - this triggers proper events
-      printLog("🔍 Step 4: Typing AI-generated cover letter text using sendKeys...");
-      await textarea.sendKeys(coverLetterText);
-      printLog("✅ Step 4: Text typed successfully");
+      printLog(`📝 Filling cover letter into textarea (${coverLetterText.length} chars)...`);
 
-      // Give it a moment to process
-      printLog("🔍 Step 5: Waiting for form processing...");
+      // Use React's native value setter so the controlled-component state updates
+      // correctly regardless of event batching. This is more reliable than
+      // sendKeys() alone for long text in React-managed textareas.
+      await ctx.driver.executeScript(`
+        const el = arguments[0];
+        const text = arguments[1];
+        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+        if (nativeSetter) {
+          nativeSetter.call(el, text);
+        } else {
+          el.value = text;
+        }
+        el.dispatchEvent(new Event('input',  { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      `, textarea, coverLetterText);
+      printLog("✅ Cover letter value set via React native setter");
+
       await ctx.driver.sleep(1000);
-      printLog("✅ Step 5: Processing wait complete");
 
-      // Verify the content was set
-      printLog("🔍 Step 6: Verifying content was set and checking validation...");
+      printLog("🔍 Verifying cover letter content...");
       textareaResult = await ctx.driver.executeScript(`
         const textarea = document.querySelector('textarea[data-testid="coverLetterTextInput"]');
         if (textarea) {
           const finalValue = textarea.value;
           const valueLength = finalValue.length;
-
-          // Check for validation errors
-          const errorElements = document.querySelectorAll('[role="alert"], .error, .invalid, [aria-invalid="true"]');
-          const hasErrors = errorElements.length > 0;
-          const errorMessages = Array.from(errorElements).map(el => el.textContent.trim()).filter(txt => txt);
-
-          // Check textarea validation state
           const textareaInvalid = textarea.getAttribute('aria-invalid') === 'true';
           const textareaRequired = textarea.hasAttribute('required') && finalValue.length === 0;
-
-          // Debug validation logic
-          const successCondition = valueLength > 0 && !textareaInvalid && !textareaRequired;
-          console.log('SendKeys result - Length:', valueLength, 'Errors:', hasErrors, 'TextareaInvalid:', textareaInvalid, 'Required:', textareaRequired);
-          console.log('Success calculation: valueLength > 0:', valueLength > 0, '!textareaInvalid:', !textareaInvalid, '!textareaRequired:', !textareaRequired);
-          console.log('Final success result:', successCondition);
-
+          const errorElements = document.querySelectorAll('[role="alert"], .error, .invalid, [aria-invalid="true"]');
+          const errorMessages = Array.from(errorElements).map(el => el.textContent.trim()).filter(txt => txt);
+          console.log('Cover letter fill result - Length:', valueLength, 'aria-invalid:', textareaInvalid, 'required+empty:', textareaRequired);
           return {
-            success: successCondition,
+            success: valueLength > 0,
             length: valueLength,
-            hasErrors: hasErrors || textareaInvalid || textareaRequired,
+            hasErrors: textareaInvalid || textareaRequired,
             errorMessages: errorMessages,
-            actualValue: finalValue.substring(0, 50) + '...',
             textareaInvalid: textareaInvalid,
             textareaRequired: textareaRequired
           };
         }
-        return { success: false, error: 'textarea_not_found' };
+        return { success: false, length: 0, error: 'textarea_not_found' };
       `);
 
     } catch (seleniumError) {
-      printLog(`❌ Selenium sendKeys failed: ${seleniumError}`);
-      throw new Error(`Both AI generation and form filling failed: ${seleniumError}`);
+      printLog(`❌ Cover letter fill failed: ${seleniumError}`);
+      throw new Error(`Cover letter fill failed: ${seleniumError}`);
     }
 
-    printLog("🔍 Step 7: Evaluating final result...");
-    printLog(`🔍 Step 7 DEBUG: textareaResult.success = ${textareaResult.success}`);
-    printLog(`🔍 Step 7 DEBUG: Full textareaResult = ${JSON.stringify(textareaResult, null, 2)}`);
-
     if (textareaResult.success) {
-      printLog(`✅ Step 7: SUCCESS! Cover letter filled - Length: ${textareaResult.length}, Value: ${textareaResult.actualValue}`);
+      printLog(`✅ Cover letter filled — ${textareaResult.length} chars in textarea`);
       if (textareaResult.hasErrors) {
-        printLog(`⚠️ VALIDATION WARNINGS: ${textareaResult.errorMessages.join(', ')}`);
+        printLog(`⚠️ Validation warnings (non-blocking): ${textareaResult.errorMessages?.join(' | ')}`);
       }
-      printLog("🎉 YIELDING: cover_letter_filled");
+      printLog("➡️ Cover letter complete — handing off to 'Continue' button step");
       yield "cover_letter_filled";
     } else {
-      printLog(`❌ Step 7: FAILURE! Cover letter filling failed: ${textareaResult.error || 'Unknown error'}`);
-      if (textareaResult.errorMessages && textareaResult.errorMessages.length > 0) {
-        printLog(`🔥 Error messages: ${textareaResult.errorMessages.join(', ')}`);
-      }
-      if (textareaResult.textareaInvalid) {
-        printLog(`🔥 Textarea marked as invalid (aria-invalid="true")`);
-      }
-      if (textareaResult.textareaRequired) {
-        printLog(`🔥 Textarea is required but empty`);
-      }
-      printLog(`📋 Length: ${textareaResult.length}, Invalid: ${textareaResult.textareaInvalid}, Required: ${textareaResult.textareaRequired}`);
-      printLog("💥 YIELDING: cover_letter_error");
+      printLog(`❌ Cover letter textarea empty after fill attempt — length: ${textareaResult.length}`);
       yield "cover_letter_error";
     }
 

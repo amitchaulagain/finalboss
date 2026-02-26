@@ -1384,3 +1384,40 @@ export async function downloadDocx(resumeData: ResumeData, filename: string): Pr
   return saveBlobToDownloads(blob, fname);
 }
 
+/**
+ * Serialize the resume data as JSON and save it to the managed files system tagged as 'base-resume'.
+ * The bot reads this JSON and generates a PDF on-demand at upload time.
+ */
+export async function saveBaseResumeJsonToDisk(resumeData: ResumeData, userEmail: string): Promise<void> {
+  const { invoke } = await import('@tauri-apps/api/core');
+
+  const json = JSON.stringify(resumeData);
+  const contentBase64 = btoa(unescape(encodeURIComponent(json)));
+
+  // Remove any existing base-resume entries to avoid index bloat
+  try {
+    const existing = await invoke<{ entries: { id: string; tags?: string[] }[] }>('get_managed_files', {
+      userId: userEmail,
+      feature: 'resume'
+    });
+    const oldIds = (existing?.entries || [])
+      .filter((e) => Array.isArray(e.tags) && e.tags.includes('base-resume'))
+      .map((e) => e.id);
+    if (oldIds.length > 0) {
+      await invoke('delete_managed_files', { userId: userEmail, ids: oldIds });
+    }
+  } catch {
+    // Best-effort cleanup; proceed even if it fails
+  }
+
+  await invoke('register_managed_file_base64', {
+    userId: userEmail,
+    feature: 'resume',
+    filename: 'base-resume.json',
+    contentBase64,
+    tags: ['base-resume'],
+    sourceRoute: '/resume-builder',
+    mimeType: 'application/json'
+  });
+}
+

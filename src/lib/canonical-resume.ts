@@ -12,6 +12,7 @@ type ManagedFileEntry = {
   relativePath?: string;
   updated_at?: string;
   updatedAt?: string;
+  tags?: string[];
 };
 
 type ManagedFileIndex = {
@@ -118,6 +119,31 @@ export function resolveCanonicalResumePath(userId: string, preferredResumeFileNa
     throw new Error(`Resume file not found on disk: ${fullPath}`);
   }
   return { filename: selected.filename, filePath: fullPath };
+}
+
+export function resolveBaseResumeJson(userId: string): Record<string, unknown> | null {
+  if (!userId) return null;
+  try {
+    const index = loadIndex(userId);
+    const candidates = index.entries
+      .filter(
+        (entry) =>
+          entry.feature === 'resume' &&
+          String(entry.filename || '').toLowerCase().endsWith('.json') &&
+          Array.isArray(entry.tags) &&
+          entry.tags.includes('base-resume')
+      )
+      .sort(sortByUpdatedDesc);
+
+    if (candidates.length === 0) return null;
+
+    const selected = candidates[0];
+    const fullPath = resolveEntryPath(userId, selected);
+    if (!fs.existsSync(fullPath)) return null;
+    return JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 export function listCanonicalResumeNames(userId: string): string[] {

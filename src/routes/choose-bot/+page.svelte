@@ -173,9 +173,8 @@
     try {
       // CHECK: Does config file exist by trying to read it
       try {
-        await invoke('read_file_async', {
-          filename: 'src/bots/user-bots-config.json'
-        });
+        const configPath = await invoke('get_app_config_path');
+        await invoke('read_file_async', { filename: configPath });
       } catch (readError) {
         // File doesn't exist or can't be read
         showConfigError = true;

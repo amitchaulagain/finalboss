@@ -37,9 +37,8 @@ export async function* step0(ctx: PlaywrightWorkflowContext): AsyncGenerator<str
       fs.readFileSync(path.join(__dirname, 'config/indeed_selectors.json'), 'utf8')
     );
 
-    const config = JSON.parse(
-      fs.readFileSync(path.join(__dirname, '../user-bots-config.json'), 'utf8')
-    );
+    const { readUserConfig } = await import('../core/user-config.js');
+    const config = readUserConfig();
 
     // Set context
     ctx.selectors = selectors;

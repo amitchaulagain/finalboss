@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getClientEmailFromContext, getJobArtifactDir } from '../../core/client_paths';
 import { logger } from '../../core/logger';
-import { readCanonicalResumeText } from '../../../lib/canonical-resume';
+import { resolveCanonicalResumePath } from '../../../lib/canonical-resume';
 
 /**
  * Parse API response text like "**Question 1:**\nAnswer one\n\n**Question 2:**\nAnswer two"
@@ -44,25 +44,30 @@ function mapTextToOptionIndex(answerText: string, options: string[]): number | n
     .map((opt, idx) => ({ idx, opt, normalized: normalizeForMatch(opt) }))
     .filter(({ normalized }) => normalized && !/^(select an option|select|please select|choose)$/.test(normalized));
 
-  // Exact option text match.
+  // 1. Exact option text match.
   const exact = candidateOptions.find(({ normalized }) => normalized === normalizedAnswer);
   if (exact) return exact.idx;
 
-  // If answer includes one option phrase.
-  const included = candidateOptions.find(({ normalized }) => normalizedAnswer.includes(normalized));
-  if (included) return included.idx;
+  // 2. Answer text contains the full option phrase (e.g. answer is a sentence that mentions the option).
+  const answerContainsOption = candidateOptions.find(({ normalized }) => normalizedAnswer.includes(normalized));
+  if (answerContainsOption) return answerContainsOption.idx;
 
-  // Simple yes/no fallback for binary options.
-  const yesNo = candidateOptions.find(({ normalized }) => normalized === 'yes' || normalized === 'no');
-  if (yesNo) {
-    if (/\byes\b/i.test(answerText)) {
-      const yes = candidateOptions.find(({ normalized }) => normalized === 'yes');
-      if (yes) return yes.idx;
-    }
-    if (/\bno\b/i.test(answerText)) {
-      const no = candidateOptions.find(({ normalized }) => normalized === 'no');
-      if (no) return no.idx;
-    }
+  // 3. Option text starts with the answer (e.g. option is "Yes, I have 3+ years experience" and
+  //    answer is just "Yes"). Require at least 2 chars to avoid false matches on single letters.
+  if (normalizedAnswer.length >= 2) {
+    const optionStartsWithAnswer = candidateOptions.find(({ normalized }) => normalized.startsWith(normalizedAnswer));
+    if (optionStartsWithAnswer) return optionStartsWithAnswer.idx;
+  }
+
+  // 4. First-word matching for yes/no-style options with longer descriptive text
+  //    (e.g. "Yes, I satisfy this requirement" → first word "yes" matches answer "yes").
+  if (/\byes\b/i.test(answerText)) {
+    const yesOpt = candidateOptions.find(({ normalized }) => normalized.split(' ')[0] === 'yes');
+    if (yesOpt) return yesOpt.idx;
+  }
+  if (/\bno\b/i.test(answerText)) {
+    const noOpt = candidateOptions.find(({ normalized }) => normalized.split(' ')[0] === 'no');
+    if (noOpt) return noOpt.idx;
   }
 
   return null;
@@ -203,11 +208,34 @@ export async function getIntelligentAnswers(questions: any[], ctx: WorkflowConte
         throw new Error('Missing user email. Canonical resume lookup requires email in config.');
       }
       const preferredResumeFileName = String(((ctx as any)?.config?.formData?.resumeFileName || '')).trim();
-      const resume = readCanonicalResumeText(userEmail, preferredResumeFileName);
-      const resumeText = String(resume.content || '').trim();
+      // Resolve the binary file path and extract text via /api/upload (same approach as
+      // cover_letter_handler). readCanonicalResumeText() reads PDFs/DOCX as raw UTF-8 which
+      // produces garbage — the upload endpoint properly decodes binary resume formats.
+      const { filename: resumeFilename, filePath: resumeFilePath } = resolveCanonicalResumePath(userEmail, preferredResumeFileName);
+      const baseUrl = process.env.API_BASE || 'http://localhost:3000';
+      const { getBearerHeader } = await import('../../core/api_client.js');
+      const resumeBinary = fs.readFileSync(resumeFilePath);
+      const ext = path.extname(resumeFilename).toLowerCase();
+      const mimeMap: Record<string, string> = {
+        '.pdf': 'application/pdf',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.doc': 'application/msword'
+      };
+      const uploadForm = new FormData();
+      uploadForm.append('userId', userEmail);
+      uploadForm.append('file', new Blob([resumeBinary], { type: mimeMap[ext] || 'application/octet-stream' }), resumeFilename);
+      const uploadResp = await fetch(`${baseUrl}/api/upload`, {
+        method: 'POST',
+        headers: { Authorization: await getBearerHeader() },
+        body: uploadForm
+      });
+      if (!uploadResp.ok) throw new Error(`Resume text extraction failed: HTTP ${uploadResp.status}`);
+      const uploadData = await uploadResp.json();
+      const resumeText = typeof uploadData?.content === 'string' ? uploadData.content.trim() : '';
       if (!resumeText) {
-        throw new Error(`Canonical resume ${resume.filename} is empty for intelligent Q&A fallback.`);
+        throw new Error(`Resume text extraction returned empty content for ${resumeFilename}`);
       }
+      console.log(`📄 Resume text extracted for Q&A: ${resumeText.length} chars from ${resumeFilename}`);
 
       const { apiRequest: apiClient } = await import('../../core/api_client');
 
@@ -220,6 +248,7 @@ export async function getIntelligentAnswers(questions: any[], ctx: WorkflowConte
           options: q.opts || []
         })),
         details: jobData.details || jobData.description || `${jobData.title || ''} at ${jobData.company || ''}`,
+        resume_text: resumeText,
         stream: false,
         useRag: true,
         jobId: `${platform}_${jobId}`
@@ -315,22 +344,16 @@ export async function getIntelligentAnswers(questions: any[], ctx: WorkflowConte
                 const indexCandidate = typeof value === 'number' ? value : mapTextToOptionIndex(normalizedValue, answeredQuestions[i].options || []);
                 if (indexCandidate != null) {
                   answeredQuestions[i].selectedAnswer = indexCandidate;
-                  logger.debug('qa.answer_mapped_option', 'Mapped AI answer to option index', {
-                    question: answeredQuestions[i].question,
-                    type: answeredQuestions[i].type,
-                    rawAnswer: normalizedValue,
-                    mappedIndex: indexCandidate,
-                    mappedOption: (answeredQuestions[i].options || [])[indexCandidate]
-                  });
+                  const mappedOption = (answeredQuestions[i].options || [])[indexCandidate];
+                  console.log(`✅ Q: "${answeredQuestions[i].question}" → mapped AI answer "${normalizedValue}" to option [${indexCandidate}] "${mappedOption}"`);
                 } else {
                   // Keep text for debugging if we fail to map.
                   answeredQuestions[i].textAnswer = normalizedValue;
-                  logger.warn('qa.answer_map_failed', 'Could not map AI answer to available options', {
-                    question: answeredQuestions[i].question,
-                    type: answeredQuestions[i].type,
-                    rawAnswer: normalizedValue,
-                    options: answeredQuestions[i].options || []
-                  });
+                  const opts = (answeredQuestions[i].options || []).map((o: string, i: number) => `[${i}] "${o}"`).join(', ');
+                  console.log(`⚠️ Could not map AI answer to available options`);
+                  console.log(`   Question : "${answeredQuestions[i].question}"`);
+                  console.log(`   AI answer: "${normalizedValue}"`);
+                  console.log(`   Options  : ${opts || '(none)'}`);
                 }
               } else if (answeredQuestions[i].type === 'checkbox') {
                 const options = answeredQuestions[i].options || [];

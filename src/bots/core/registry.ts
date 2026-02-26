@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { readUserConfig, USER_CONFIG_PATH } from './user-config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -125,13 +126,13 @@ export class BotRegistry {
         const config_module = require(bot_info.config_path);
         return config_module.default || config_module;
       } else {
-        // Use core user config as fallback
-        const core_config_path = path.join(__dirname, '../user-bots-config.json');
-        if (fs.existsSync(core_config_path)) {
-          console.log(`[Registry] Using core configuration for '${bot_name}'`);
-          return JSON.parse(fs.readFileSync(core_config_path, 'utf8'));
+        // Use canonical user config as fallback
+        const userConfig = readUserConfig();
+        if (Object.keys(userConfig).length > 0) {
+          console.log(`[Registry] Using user configuration from ${USER_CONFIG_PATH} for '${bot_name}'`);
+          return userConfig;
         } else {
-          console.warn(`[Registry] Configuration file not found for '${bot_name}', using defaults`);
+          console.warn(`[Registry] Configuration not found for '${bot_name}', using defaults`);
           return {};
         }
       }

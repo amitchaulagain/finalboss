@@ -140,11 +140,7 @@
     invoke<string>('get_app_config_path')
       .then(p => invoke<string>('read_file_async', { filename: p }))
       .then(loadConfig)
-      .catch(() =>
-        invoke<string>('read_file_async', { filename: 'src/bots/user-bots-config.json' })
-          .then(loadConfig)
-          .catch(() => { /* no config available */ })
-      );
+      .catch(() => { /* no config available */ });
 
     // Subscribe to auth store to load jobs list and attempt to upgrade the resume
     // text from the actual uploaded file (better quality than parsed config data).
@@ -275,7 +271,8 @@
     try {
       let preferred = '';
       try {
-        const cfg = await invoke<string>('read_file_async', { filename: 'src/bots/user-bots-config.json' });
+        const configPath = await invoke<string>('get_app_config_path');
+        const cfg = await invoke<string>('read_file_async', { filename: configPath });
         preferred = JSON.parse(cfg)?.formData?.resumeFileName?.trim() || '';
       } catch { /* ok */ }
 

@@ -175,8 +175,8 @@ const cleanStaleLockFiles = (sessionDir: string): void => {
 
 export const setupChromeDriver = async (botName: string = 'seek'): Promise<{ driver: WebDriver; actions: any; sessionExists: boolean; sessionsDir: string; stopMonitoring?: () => void }> => {
   try {
-    const configPath = path.join(__dirname, '../user-bots-config.json');
-    const config: BotConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const { readUserConfig } = await import('./user-config.js');
+    const config: BotConfig = readUserConfig() as BotConfig;
 
     // Create session management like botrunner.ts
     const sessionsDir = path.join(process.cwd(), 'sessions', botName);

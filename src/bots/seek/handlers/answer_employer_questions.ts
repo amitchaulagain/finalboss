@@ -44,11 +44,13 @@ function mapFailureReason(questionType: string, errorText?: string): FillFailure
 // When modalScopeSelector is set (e.g. LinkedIn Easy Apply), we find the container inside that modal so we don't match elements outside it
 export async function fillQuestionFieldDetailed(
   ctx: WorkflowContext,
-  containerSelector: string, // The robust selector for the question's container
+  containerSelector: string,
   questionType: string,
   answer: any,
-  modalScopeSelector?: string, // Optional: scope to this modal (e.g. "[data-test-modal-id='easy-apply-modal']")
-  radioName?: string // Optional: name attribute for radio group filtering
+  modalScopeSelector?: string,
+  radioName?: string,
+  elementId?: string,      // native ID of the form element (stable across React re-renders)
+  checkboxName?: string,   // name attr of checkbox group (stable across React re-renders)
 ): Promise<FillQuestionResult> {
   if (!containerSelector) {
     printLog('❌ Cannot fill field: containerSelector is missing.');
@@ -56,38 +58,34 @@ export async function fillQuestionFieldDetailed(
   }
 
   const answerIdx = modalScopeSelector ? 2 : 1;
+  const elementIdIdx = answerIdx + 1;  // index of elementId / checkboxName arg (appended after answer)
   const getContainerScript = modalScopeSelector
     ? 'var modal = document.querySelector(arguments[0]); var container = modal ? modal.querySelector(arguments[1]) : null;'
     : 'var container = document.querySelector(arguments[0]);';
-  const selectArgs = modalScopeSelector ? [modalScopeSelector, containerSelector, answer] : [containerSelector, answer];
+  const selectArgs = modalScopeSelector ? [modalScopeSelector, containerSelector, answer, elementId || ''] : [containerSelector, answer, elementId || ''];
   const radioArgs = modalScopeSelector
     ? [modalScopeSelector, containerSelector, answer, radioName || '']
     : [containerSelector, answer, radioName || ''];
-  const checkboxArgs = modalScopeSelector ? [modalScopeSelector, containerSelector, Array.isArray(answer) ? answer : [answer]] : [containerSelector, Array.isArray(answer) ? answer : [answer]];
+  const checkboxArgs = modalScopeSelector ? [modalScopeSelector, containerSelector, Array.isArray(answer) ? answer : [answer], checkboxName || ''] : [containerSelector, Array.isArray(answer) ? answer : [answer], checkboxName || ''];
 
   try {
     switch (questionType) {
       case 'select':
         const selectResult = await ctx.driver.executeScript(`
-          ${getContainerScript}
-          if (!container) return { success: false, error: 'Container not found' };
-
-          // Debug: what's actually in the container
-          console.log('Container HTML:', container.outerHTML);
-          console.log('Container tagName:', container.tagName);
-
-          // Try multiple ways to find the select element
-          let select = container.querySelector('select');
-          if (!select && container.tagName === 'SELECT') {
-            select = container; // The container itself is the select
-          }
-          if (!select) {
-            // Also check if there's a select as a direct child or sibling
-            select = container.parentElement?.querySelector('select');
+          // Try native elementId first (stable across React re-renders)
+          var nativeId = arguments[${elementIdIdx}];
+          var select = nativeId ? document.getElementById(nativeId) : null;
+          if (!select || select.tagName !== 'SELECT') {
+            select = null;
+            ${getContainerScript}
+            if (container) {
+              select = container.querySelector('select');
+              if (!select && container.tagName === 'SELECT') select = container;
+              if (!select) select = container.parentElement ? container.parentElement.querySelector('select') : null;
+            }
           }
 
-          const answerIndex = arguments[${answerIdx}];
-
+          var answerIndex = arguments[${answerIdx}];
           if (select && select.options && select.options[answerIndex]) {
             select.selectedIndex = answerIndex;
             select.dispatchEvent(new Event('change', { bubbles: true }));
@@ -96,9 +94,9 @@ export async function fillQuestionFieldDetailed(
           return {
             success: false,
             error: 'Select element or option not found. Found select: ' + !!select +
-                   ', container tagName: ' + container.tagName +
                    ', has options: ' + (select ? select.options.length : 0) +
-                   ', container id: ' + container.id
+                   ', requested index: ' + answerIndex +
+                   ', nativeId: ' + (nativeId || 'none')
           };
         `, ...selectArgs);
 
@@ -117,13 +115,14 @@ export async function fillQuestionFieldDetailed(
         // Step 1: Find the target radio button and return its ID for Selenium click
         const radioData = await ctx.driver.executeScript(`
           ${getContainerScript}
-          if (!container) return { success: false, error: 'Container not found' };
-
           var radioNameFilter = arguments[${radioNameIdx}];
           var selector = radioNameFilter
             ? 'input[type="radio"][name="' + radioNameFilter + '"]'
             : 'input[type="radio"]';
-          var radioButtons = container.querySelectorAll(selector);
+          // Fall back to page-wide search when container is lost (e.g. React re-render wiped injected ID)
+          var radioButtons = container
+            ? container.querySelectorAll(selector)
+            : (radioNameFilter ? document.querySelectorAll(selector) : null);
           var answerIndex = arguments[${answerIdx}];
 
           if (radioButtons && radioButtons[answerIndex]) {
@@ -134,7 +133,7 @@ export async function fillQuestionFieldDetailed(
             }
             return { success: true, radioId: target.id, totalRadios: radioButtons.length };
           }
-          return { success: false, error: 'Radio button not found. Found radios: ' + radioButtons.length + ', requested index: ' + answerIndex + ', nameFilter: ' + (radioNameFilter || 'none') };
+          return { success: false, error: 'Radio button not found. Found radios: ' + (radioButtons ? radioButtons.length : 0) + ', requested index: ' + answerIndex + ', nameFilter: ' + (radioNameFilter || 'none') + ', usedPageWide: ' + !container };
         `, ...radioArgs);
 
         if (!radioData.success) {
@@ -181,19 +180,23 @@ export async function fillQuestionFieldDetailed(
       case 'text':
       case 'textarea':
         try {
-          const textScriptArgs = modalScopeSelector ? [modalScopeSelector, containerSelector] : [containerSelector];
+          const textScriptArgs = modalScopeSelector ? [modalScopeSelector, containerSelector, elementId || ''] : [containerSelector, elementId || ''];
           const textElements = await ctx.driver.executeScript(`
-            ${getContainerScript}
-            if (!container) return null;
-
-            const textElement = container.querySelector('textarea, input[type="text"]');
+            // Try native elementId first (stable across React re-renders)
+            var nativeId = arguments[${answerIdx}];
+            var textElement = nativeId ? document.getElementById(nativeId) : null;
+            if (!textElement) {
+              ${getContainerScript}
+              if (container) {
+                textElement = container.querySelector('textarea, input[type="text"]');
+              }
+            }
             if (textElement) {
-              return {
-                tagName: textElement.tagName.toLowerCase(),
-                selector: textElement.tagName.toLowerCase() +
-                         (textElement.id ? '#' + textElement.id : '') +
-                         (textElement.className ? '.' + textElement.className.split(' ').filter(Boolean).join('.') : '')
-              };
+              // Assign an ID if missing so Selenium can find it reliably
+              if (!textElement.id) {
+                textElement.id = 'seek-text-fill-' + Date.now();
+              }
+              return { tagName: textElement.tagName.toLowerCase(), resolvedId: textElement.id };
             }
             return null;
           `, ...textScriptArgs);
@@ -203,12 +206,10 @@ export async function fillQuestionFieldDetailed(
             return { success: false, failureReason: 'element_not_found', error: 'Text element not found in container' };
           }
 
-          const fullSelector = modalScopeSelector
-            ? `${modalScopeSelector} ${containerSelector} ${textElements.tagName}`
-            : `${containerSelector} ${textElements.tagName}`;
-          printLog(`Found text element: ${fullSelector}`);
+          const elementSelector = `#${textElements.resolvedId}`;
+          printLog(`Found text element: ${elementSelector}`);
 
-          const textElement = await ctx.driver.findElement({ css: fullSelector });
+          const textElement = await ctx.driver.findElement({ css: elementSelector });
 
           // Clear existing content first
           await textElement.clear();
@@ -238,13 +239,13 @@ export async function fillQuestionFieldDetailed(
 
           const checkboxData = await ctx.driver.executeScript(`
             ${getContainerScript}
-            if (!container) {
-              return { success: false, error: 'Container not found' };
-            }
-
-            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
-            if (checkboxes.length === 0) {
-              return { success: false, error: 'No checkboxes found' };
+            var checkboxNameArg = arguments[${elementIdIdx}];
+            // Fall back to page-wide search when container is lost (e.g. React re-render wiped injected ID)
+            var checkboxes = container
+              ? container.querySelectorAll('input[type="checkbox"]')
+              : (checkboxNameArg ? document.querySelectorAll('input[type="checkbox"][name="' + checkboxNameArg + '"]') : null);
+            if (!checkboxes || checkboxes.length === 0) {
+              return { success: false, error: 'Container not found or no checkboxes found. usedPageWide: ' + !container };
             }
 
             const answersToSelect = arguments[${answerIdx}];
@@ -356,9 +357,11 @@ export async function fillQuestionField(
   questionType: string,
   answer: any,
   modalScopeSelector?: string,
-  radioName?: string
+  radioName?: string,
+  elementId?: string,
+  checkboxName?: string,
 ): Promise<boolean> {
-  const result = await fillQuestionFieldDetailed(ctx, containerSelector, questionType, answer, modalScopeSelector, radioName);
+  const result = await fillQuestionFieldDetailed(ctx, containerSelector, questionType, answer, modalScopeSelector, radioName, elementId, checkboxName);
   return result.success;
 }
 
@@ -425,7 +428,8 @@ export async function* answerEmployerQuestions(ctx: WorkflowContext): AsyncGener
         }
 
         if (answer !== undefined && answer !== null && question.answerSource !== 'No Answer') {
-          const filled = await fillQuestionField(ctx, question.containerSelector, question.type, answer, undefined, question.radioName);
+          const fillResult = await fillQuestionFieldDetailed(ctx, question.containerSelector, question.type, answer, undefined, question.radioName, question.elementId, question.checkboxName);
+          const filled = fillResult.success;
           const options = question.options || question.opts || [];
           const selected =
             question.type === 'select' || question.type === 'radio'
@@ -450,7 +454,8 @@ export async function* answerEmployerQuestions(ctx: WorkflowContext): AsyncGener
               selected,
               answer: resolvedAnswer,
               answerSource: question.answerSource,
-              status: 'success'
+              status: 'success',
+              failureReason: fillResult.failureReason,
             });
           } else {
             printLog(`⚠️ Failed to fill form field for question ${i + 1}`);
@@ -462,7 +467,8 @@ export async function* answerEmployerQuestions(ctx: WorkflowContext): AsyncGener
               selected,
               answer: resolvedAnswer,
               answerSource: question.answerSource,
-              status: 'failed'
+              status: 'failed',
+              failureReason: fillResult.failureReason,
             });
           }
         } else {
@@ -499,7 +505,7 @@ export async function* answerEmployerQuestions(ctx: WorkflowContext): AsyncGener
     const jobDir = getJobArtifactDir(ctx, 'seek', jobId);
     fs.writeFileSync(
       path.join(jobDir, 'qna.json'),
-      JSON.stringify({ questions: qnaResults, summary: { total: answeredQuestions.length, success: successCount, errors: errorCount } }, null, 2)
+      JSON.stringify({ questions: qnaResults, summary: { total: answeredQuestions.length, success: successCount, errors: errorCount, runAt: new Date().toISOString() } }, null, 2)
     );
     printLog(`💾 QNA saved to qna.json`);
 

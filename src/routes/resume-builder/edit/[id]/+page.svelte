@@ -4,12 +4,14 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
 import { resumesStore, activeResume, draftResume, createExperience, createEducation, createSkill, createCertification, createProject, createLanguage, autoSave, loadResumes } from '$lib/resume/store';
-import { downloadDocx, downloadPdf } from '$lib/resume/generator';
+import { downloadDocx, downloadPdf, saveBaseResumeJsonToDisk } from '$lib/resume/generator';
 import { getTemplateById } from '$lib/resume/templates';
 import type { ResumeData } from '$lib/resume/types';
 import { getEffectiveFont, getEffectiveFontSize, getLetterSpacing, getLineSpacing } from '$lib/resume/utils/font-helpers';
+import { invoke } from '@tauri-apps/api/core';
 
   let resume: ResumeData | null = null;
+  let userEmail = '';
   let saving = false;
   let downloading = false;
   let downloadingPdf = false;
@@ -54,6 +56,15 @@ import { getEffectiveFont, getEffectiveFontSize, getLetterSpacing, getLineSpacin
   }
 
   onMount(async () => {
+    try {
+      const configPath = await invoke<string>('get_app_config_path');
+      const raw = await invoke<string>('read_file_async', { filename: configPath });
+      const config = JSON.parse(raw);
+      userEmail = String(config?.formData?.email || config?.email || '').trim();
+    } catch {
+      // email remains empty; saveBaseResumeJsonToDisk will be skipped
+    }
+
     if (resumeId === 'new') {
       const draft = get(draftResume);
       if (draft) {
@@ -92,6 +103,15 @@ import { getEffectiveFont, getEffectiveFontSize, getLetterSpacing, getLineSpacin
     }, 1000);
   }
 
+  async function trySaveBaseResumeToDisk(r: ResumeData) {
+    if (!userEmail) return;
+    try {
+      await saveBaseResumeJsonToDisk(r, userEmail);
+    } catch (err) {
+      console.warn('Failed to save base resume JSON to disk:', err);
+    }
+  }
+
   async function handleSave() {
     if (!resume) return;
     saving = true;
@@ -101,11 +121,13 @@ import { getEffectiveFont, getEffectiveFontSize, getLetterSpacing, getLineSpacin
         draftResume.set(null);
         isNewDraft = false;
         autoSave();
+        if (stored.isBase) await trySaveBaseResumeToDisk(stored);
         await new Promise(resolve => setTimeout(resolve, 300));
         goto(`/resume-builder/edit/${stored.id}`, { replaceState: true });
       } else {
         resumesStore.updateById(resumeId, resume);
         autoSave();
+        if (resume.isBase) await trySaveBaseResumeToDisk(resume);
         await new Promise(resolve => setTimeout(resolve, 500));
       }
     } finally {
