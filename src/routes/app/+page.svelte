@@ -87,63 +87,6 @@
         </div>
       </div>
 
-      <!-- Analytics Card -->
-      <div class="card bg-base-100 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer"
-           on:click={() => navigateTo('/backend-analytics')}
-           on:keydown={(e) => e.key === 'Enter' && navigateTo('/backend-analytics')}
-           role="button"
-           tabindex="0">
-        <figure class="px-10 pt-10">
-          <div class="text-6xl">📊</div>
-        </figure>
-        <div class="card-body items-center text-center">
-          <h2 class="card-title">Analytics</h2>
-          <p>View detailed reports on your job applications, success rates, and performance metrics</p>
-          <div class="card-actions">
-            <div class="badge badge-accent">Insights</div>
-            <div class="badge badge-outline">Reports</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Test Functions Card -->
-      <div class="card bg-base-100 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer"
-           on:click={() => navigateTo('/testfunctions')}
-           on:keydown={(e) => e.key === 'Enter' && navigateTo('/testfunctions')}
-           role="button"
-           tabindex="0">
-        <figure class="px-10 pt-10">
-          <div class="text-6xl">🧪</div>
-        </figure>
-        <div class="card-body items-center text-center">
-          <h2 class="card-title">Test Functions</h2>
-          <p>Test and debug your automation settings before running full job search campaigns</p>
-          <div class="card-actions">
-            <div class="badge badge-warning">Testing</div>
-            <div class="badge badge-outline">Debug</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Generic Questions Card -->
-      <div class="card bg-base-100 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer"
-           on:click={() => navigateTo('/generic-questions')}
-           on:keydown={(e) => e.key === 'Enter' && navigateTo('/generic-questions')}
-           role="button"
-           tabindex="0">
-        <figure class="px-10 pt-10">
-          <div class="text-6xl">❓</div>
-        </figure>
-        <div class="card-body items-center text-center">
-          <h2 class="card-title">Generic Questions</h2>
-          <p>Configure your answers to common screening questions for faster application processing</p>
-          <div class="card-actions">
-            <div class="badge badge-info">Q&A</div>
-            <div class="badge badge-outline">Smart</div>
-          </div>
-        </div>
-      </div>
-
       <!-- Quick Stats Card -->
       <div class="card bg-base-100 shadow-xl">
         <div class="card-body">
@@ -167,31 +110,10 @@
             </div>
           </div>
           <div class="card-actions justify-end">
-            <button class="btn btn-sm btn-outline" on:click={() => navigateTo('/backend-analytics')}>
-              View Details
-            </button>
           </div>
         </div>
       </div>
 
-      <!-- Files Manager Card -->
-      <div class="card bg-base-100 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer"
-           on:click={() => navigateTo('/files')}
-           on:keydown={(e) => e.key === 'Enter' && navigateTo('/files')}
-           role="button"
-           tabindex="0">
-        <figure class="px-10 pt-10">
-          <div class="text-6xl">🗂️</div>
-        </figure>
-        <div class="card-body items-center text-center">
-          <h2 class="card-title">Files Manager</h2>
-          <p>Manage local resume, cover-letter, and enhancement files with filtering, grouping, and backups</p>
-          <div class="card-actions">
-            <div class="badge badge-info">Files</div>
-            <div class="badge badge-outline">Local</div>
-          </div>
-        </div>
-      </div>
     </div>
   {:else}
     <!-- Not Authenticated -->

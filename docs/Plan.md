@@ -44,3 +44,15 @@
 - [] Is the Seek Bot clicking on 'Continue' button after answering questions?
 
 - [] Is the Seek Bot clicking on the 'Submit Application' button?
+
+## 4. API Test (Lab)
+
+- [x] This page is used to simulate the production of Resume, Cover letter and answers to the questionnaire for a single job. It helps measure the app's performance in these three things so that user can tweak their configuration settings or make other changes that will be helpful to improve the quality of job application.
+
+- [x] Select Test Job: a selection input where the user can select a previously saved job (from its job id). It must fetch from all previous jobs for all bots.
+
+- [x] The result section: shows three tabs, each for 'Cover letter', 'Resume' and 'Q&A'. To produce results for each, the app must use the same mechanism as it uses when bots are running live.
+
+- [x] If necessary, the respective bots (depends which platform the job belongs to) can be used to simulate operations and produce answers.
+
+- [x] The UI of the result section must be same as the details view of 'job-analytics' page. In the 'Q&A' section it should Questions (with options) and chosen answer just like in the 'Q&A' tab of job-analytics.

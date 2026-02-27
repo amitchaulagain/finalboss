@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-02-23T08:48:54.881Z",
+  "lastUpdated": "2026-02-27T03:21:27.789Z",
   "questions": [
     {
       "id": 1,
@@ -80,6 +80,70 @@
       ],
       "answer": [
         "Yes"
+      ]
+    },
+    {
+      "id": 11,
+      "match_keywords": [
+        "current job level",
+        "job post",
+        "experience level"
+      ],
+      "answer": [
+        "Middle Level Software Engineer"
+      ]
+    },
+    {
+      "id": 12,
+      "match_keywords": [
+        "Javascript development experience?"
+      ],
+      "answer": [
+        "Yes",
+        "I have 4 years of Javascript development experience. I mainly work with Nodejs and Reactjs"
+      ]
+    },
+    {
+      "id": 13,
+      "match_keywords": [
+        "front end development libraries and frameworks your are proficient in?"
+      ],
+      "answer": [
+        "Reactjs",
+        "Tailwind"
+      ]
+    },
+    {
+      "id": 14,
+      "match_keywords": [
+        "back end development libraries and frameworks your are proficient in?"
+      ],
+      "answer": [
+        "Django",
+        "Nodejs",
+        "Laravel",
+        ".NET"
+      ]
+    },
+    {
+      "id": 15,
+      "match_keywords": [
+        "experience with Relational Database systems or query languages?"
+      ],
+      "answer": [
+        "Yes",
+        "I have 2 years of experience working with Relational database systems (RDBMs) and SQL"
+      ]
+    },
+    {
+      "id": 16,
+      "match_keywords": [
+        "English language skills?"
+      ],
+      "answer": [
+        "C1",
+        "Professional working proficiency",
+        "Professional working English"
       ]
     }
   ],
