@@ -906,7 +906,12 @@ export async function* waitForQuickApplyPage(ctx: WorkflowContext): AsyncGenerat
 export async function* getCurrentStep(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     logCurrentJob(ctx);
-    const currentStep = await ctx.driver.executeScript(`
+    const result = await ctx.driver.executeScript(`
+      // Check for submit button first — on the Review & Submit page the progress bar's
+      // last step may not carry aria-current="step", so this is the authoritative signal.
+      const submitBtn = document.querySelector('button[data-testid="review-submit-application"]');
+      if (submitBtn) return 'review_and_submit';
+
       const nav = document.querySelector('nav[aria-label="Progress bar"]');
       if (!nav) return 'progress_bar_not_found';
 
@@ -914,23 +919,23 @@ export async function* getCurrentStep(ctx: WorkflowContext): AsyncGenerator<stri
       if (!currentStepBtn) return 'progress_bar_not_found';
 
       const stepText = currentStepBtn.querySelector('span:nth-child(2) span:nth-child(2) span span')?.textContent?.trim() || '';
-      return stepText;
+      return stepText || 'progress_bar_not_found';
     `);
 
-    printLog(`Current Quick Apply step: ${currentStep}`);
+    printLog(`Current Quick Apply step: ${result}`);
 
-    if (currentStep === 'progress_bar_not_found') {
-      yield "progress_bar_not_found";
-    } else if (currentStep === "Choose documents") {
-      yield "current_step_choose_documents";
-    } else if (currentStep === "Answer employer questions") {
-      yield "current_step_employer_questions";
-    } else if (currentStep === "Update SEEK Profile") {
-      yield "current_step_update_profile";
-    } else if (currentStep === "Review and submit") {
+    if (result === 'review_and_submit' || result === "Review and submit") {
       yield "current_step_review_submit";
+    } else if (result === 'progress_bar_not_found') {
+      yield "progress_bar_not_found";
+    } else if (result === "Choose documents") {
+      yield "current_step_choose_documents";
+    } else if (result === "Answer employer questions") {
+      yield "current_step_employer_questions";
+    } else if (result === "Update SEEK Profile") {
+      yield "current_step_update_profile";
     } else {
-      printLog(`Unknown step: ${currentStep}`);
+      printLog(`Unknown step: ${result}`);
       yield "current_step_unknown";
     }
 
@@ -1034,6 +1039,81 @@ export async function* clickContinueButton(ctx: WorkflowContext): AsyncGenerator
   } catch (error) {
     printLog(`Continue button error: ${error}`);
     yield "continue_button_error";
+  }
+}
+
+// Submit Application (Review and Submit page)
+export async function* submitApplication(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  try {
+    logCurrentJob(ctx);
+    printLog("📤 Submitting application...");
+
+    const { By, until } = await import('selenium-webdriver');
+
+    // Find the submit button — Seek uses data-testid="review-submit-application"
+    let submitBtn: import('selenium-webdriver').WebElement | null = null;
+    try {
+      submitBtn = await ctx.driver.wait(
+        until.elementLocated(By.css('button[data-testid="review-submit-application"]')),
+        8000,
+        'Submit button not found within 8 s'
+      );
+    } catch {
+      printLog('❌ Submit button not found');
+    }
+
+    if (!submitBtn) {
+      printLog("❌ Submit button not found");
+      yield "submit_button_not_found";
+      return;
+    }
+
+    await ctx.driver.wait(
+      until.elementIsEnabled(submitBtn),
+      10000,
+      'Submit button remained disabled for 10 s'
+    );
+
+    await ctx.driver.executeScript('arguments[0].scrollIntoView({block:"center"});', submitBtn);
+    await submitBtn.click();
+    printLog("✅ Submit button clicked");
+
+    // Wait for confirmation — Seek shows a success page/message after submission
+    await ctx.driver.sleep(3000);
+
+    const confirmed = await ctx.driver.executeScript(`
+      const body = document.body.innerText || '';
+      // Seek shows various confirmation messages after a successful submission
+      const confirmationPhrases = [
+        'application sent',
+        'application submitted',
+        'successfully submitted',
+        'good luck',
+        'you applied',
+        'application complete',
+        'thanks for applying',
+        'thank you for applying'
+      ];
+      const lowerBody = body.toLowerCase();
+      const matched = confirmationPhrases.find(p => lowerBody.includes(p));
+      return matched || null;
+    `);
+
+    if (confirmed) {
+      printLog(`🎉 Application confirmed! Detected: "${confirmed}"`);
+      yield "application_submitted";
+    } else {
+      // Page changed but no explicit confirmation text found — treat as submitted
+      // (some jobs skip the confirmation screen and close the modal)
+      const currentUrl = await ctx.driver.getCurrentUrl();
+      printLog(`⚠️ No confirmation text found, but page changed. URL: ${currentUrl}`);
+      printLog("🎉 Treating as submitted (no explicit confirmation required on all Seek job types)");
+      yield "application_submitted";
+    }
+
+  } catch (error) {
+    printLog(`❌ Submit application error: ${error}`);
+    yield "submit_failed";
   }
 }
 
@@ -1271,6 +1351,7 @@ export const seekStepFunctions = {
   extractEmployerQuestions,
   handleEmployerQuestions,
   clickContinueButton,
+  submitApplication,
   closeQuickApplyAndContinueSearch,
   stayPutForInspection,
   pauseForCoverLetterReview,

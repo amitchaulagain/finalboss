@@ -152,8 +152,8 @@ steps_config:
     transitions:
       current_step_choose_documents: "handle_resume_selection"
       current_step_employer_questions: "handle_employer_questions"
-      current_step_update_profile: "close_quick_apply_and_continue_search"
-      current_step_review_submit: "close_quick_apply_and_continue_search"
+      current_step_update_profile: "click_continue_button"
+      current_step_review_submit: "submit_application"
       current_step_unknown: "close_quick_apply_and_continue_search"
       progress_bar_not_found: "handle_resume_selection"
       progress_bar_evaluation_error: "close_quick_apply_and_continue_search"
@@ -196,8 +196,8 @@ steps_config:
     transitions:
       current_step_choose_documents: "stay_put_for_inspection"
       current_step_employer_questions: "extract_employer_questions"
-      current_step_update_profile: "close_quick_apply_and_continue_search"
-      current_step_review_submit: "close_quick_apply_and_continue_search"
+      current_step_update_profile: "click_continue_button"
+      current_step_review_submit: "submit_application"
       current_step_unknown: "close_quick_apply_and_continue_search"
       progress_bar_not_found: "close_quick_apply_and_continue_search"
       progress_bar_evaluation_error: "close_quick_apply_and_continue_search"
@@ -218,7 +218,7 @@ steps_config:
     step: 13.5
     func: "handleEmployerQuestions"
     transitions:
-      employer_questions_saved: "close_quick_apply_and_continue_search"
+      employer_questions_saved: "click_continue_button"
       no_questions: "stay_put_for_inspection"
       no_job_data: "close_quick_apply_and_continue_search"
       employer_questions_error: "stay_put_for_inspection"
@@ -230,8 +230,18 @@ steps_config:
     func: "stayPutForInspection"
     transitions:
       inspection_complete: "close_quick_apply_and_continue_search"
-    timeout: 300
+    timeout: 30
     on_timeout_event: "inspection_complete"
+
+  submit_application:
+    step: 14.8
+    func: "submitApplication"
+    transitions:
+      application_submitted: "close_quick_apply_and_continue_search"
+      submit_button_not_found: "stay_put_for_inspection"
+      submit_failed: "stay_put_for_inspection"
+    timeout: 30
+    on_timeout_event: "submit_failed"
 
   close_quick_apply_and_continue_search:
     step: 15

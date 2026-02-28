@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-02-15T12:37:49.294Z",
+  "lastUpdated": "2026-02-28T16:13:49.238Z",
   "questions": [
     {
       "id": 1,
@@ -124,29 +124,6 @@
       ]
     },
     {
-      "id": 12,
-      "match_keywords": [
-        ""
-      ],
-      "answer": [
-        ""
-      ]
-    },
-    {
-      "id": 13,
-      "match_keywords": [
-        ""
-      ],
-      "answer": [
-        ""
-      ]
-    },
-    {
-      "id": 14,
-      "match_keywords": [],
-      "answer": []
-    },
-    {
       "id": 15,
       "match_keywords": [
         "mobile phone number",
@@ -168,6 +145,16 @@
       ],
       "answer": [
         "achaulagain123@gmail.com"
+      ]
+    },
+    {
+      "id": 17,
+      "match_keywords": [
+        "JavaScript development experience?"
+      ],
+      "answer": [
+        "Yes",
+        "3+ years experience of working with javascript"
       ]
     }
   ],

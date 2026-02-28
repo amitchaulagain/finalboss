@@ -66,30 +66,54 @@ export async function fillQuestionFieldDetailed(
   const checkboxArgs = modalScopeSelector ? [modalScopeSelector, containerSelector, Array.isArray(answer) ? answer : [answer]] : [containerSelector, Array.isArray(answer) ? answer : [answer]];
 
   try {
+    // Skip already-filled fields to avoid overwriting on re-entry
+    const alreadyFilled = await ctx.driver.executeScript(`
+      var container = document.querySelector(arguments[0]);
+      if (!container) return false;
+      var type = arguments[1];
+      if (type === 'select') {
+        var sel = container.querySelector('select') || (container.tagName === 'SELECT' ? container : null);
+        return sel ? sel.selectedIndex > 0 : false;
+      }
+      if (type === 'radio') {
+        return !!container.querySelector('input[type="radio"]:checked');
+      }
+      if (type === 'text' || type === 'textarea') {
+        var el = container.querySelector('textarea, input[type="text"]');
+        return el ? el.value.trim().length > 0 : false;
+      }
+      if (type === 'checkbox') {
+        return !!container.querySelector('input[type="checkbox"]:checked');
+      }
+      return false;
+    `, containerSelector, questionType);
+
+    if (alreadyFilled) {
+      printLog(`⏭️ Skipping already-filled field (${questionType}) in container: ${containerSelector}`);
+      return { success: true, failureReason: 'none' };
+    }
+
     switch (questionType) {
       case 'select':
         const selectResult = await ctx.driver.executeScript(`
           ${getContainerScript}
           if (!container) return { success: false, error: 'Container not found' };
 
-          // Debug: what's actually in the container
-          console.log('Container HTML:', container.outerHTML);
-          console.log('Container tagName:', container.tagName);
-
           // Try multiple ways to find the select element
           let select = container.querySelector('select');
           if (!select && container.tagName === 'SELECT') {
-            select = container; // The container itself is the select
+            select = container;
           }
           if (!select) {
-            // Also check if there's a select as a direct child or sibling
             select = container.parentElement?.querySelector('select');
           }
 
           const answerIndex = arguments[${answerIdx}];
 
           if (select && select.options && select.options[answerIndex]) {
-            select.selectedIndex = answerIndex;
+            // Use React's native setter so synthetic events fire and state updates
+            const nativeValueSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+            nativeValueSetter.call(select, select.options[answerIndex].value);
             select.dispatchEvent(new Event('change', { bubbles: true }));
             return { success: true };
           }
@@ -505,11 +529,16 @@ export async function* answerEmployerQuestions(ctx: WorkflowContext): AsyncGener
 
     printLog(`📊 Results: ${successCount}/${answeredQuestions.length} questions answered, ${errorCount} errors`);
 
-    if (errorCount === 0 && answeredQuestions.length > 0) {
-      yield "employer_questions_saved";
-    } else if (answeredQuestions.length === 0) {
+    if (answeredQuestions.length === 0) {
       yield "no_questions";
+    } else if (successCount > 0) {
+      // Proceed as long as at least one question was answered — partial errors should not block submission
+      if (errorCount > 0) {
+        printLog(`⚠️ ${errorCount} question(s) had errors but ${successCount} succeeded — proceeding to continue`);
+      }
+      yield "employer_questions_saved";
     } else {
+      // Every single question failed — something is fundamentally wrong
       yield "employer_questions_error";
     }
 
