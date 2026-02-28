@@ -1,6 +1,7 @@
 import type { WorkflowContext } from '../../core/workflow_engine';
 import { getClientEmailFromContext, getJobArtifactDir } from '../../core/client_paths';
 import { readCanonicalResumeText } from '../../../lib/canonical-resume';
+import { By, until } from 'selenium-webdriver';
 
 const printLog = (message: string) => {
   console.log(message);
@@ -121,41 +122,27 @@ export async function* handleCoverLetter(ctx: WorkflowContext): AsyncGenerator<s
   try {
     printLog("Handling cover letter...");
 
-    // Step 1: Click cover letter radio button (improved from Python version)
-    const radioClicked = await ctx.driver.executeScript(`
-      const coverLetterRadio = document.querySelector('input[data-testid="coverLetter-method-change"]');
-      if (coverLetterRadio && !coverLetterRadio.checked) {
-        // Use improved click strategy from Python
-        coverLetterRadio.click();
-        coverLetterRadio.checked = true;
-
-        // Dispatch change event
-        const changeEvent = new Event('change', { bubbles: true });
-        coverLetterRadio.dispatchEvent(changeEvent);
-
-        // Dispatch click event
-        const clickEvent = new Event('click', { bubbles: true });
-        coverLetterRadio.dispatchEvent(clickEvent);
-
-        console.log('Cover letter radio clicked successfully');
-        return true;
-      }
-      return false;
-    `);
-
-    if (!radioClicked) {
-      printLog("Cover letter radio not found or already selected");
+    // Step 1: Find and native-click the cover letter radio button.
+    // JS executeScript clicks bypass React's synthetic event system and won't
+    // reveal the textarea — native Selenium click fires real browser events.
+    printLog("🔍 Looking for cover letter radio button...");
+    try {
+      const coverLetterRadio = await ctx.driver.wait(
+        until.elementLocated(By.css('input[data-testid="coverLetter-method-change"]')),
+        5000,
+        'Cover letter radio button not found within 5 s'
+      );
+      await ctx.driver.executeScript('arguments[0].scrollIntoView({block:"center"});', coverLetterRadio);
+      await coverLetterRadio.click();
+      printLog("✅ Cover letter radio clicked");
+    } catch {
+      printLog("ℹ️ Cover letter radio not found — cover letter not required for this job");
       yield "cover_letter_not_required";
       return;
     }
 
-    printLog("Cover letter radio clicked successfully");
-
-    // Step 2: Wait for textarea to appear (outside executeScript like Python)
+    // Step 2: Wait for the textarea to appear after the React state update
     await ctx.driver.sleep(1000);
-
-    // Step 3: Use Selenium's sendKeys for human-like typing instead of executeScript
-    await ctx.driver.sleep(500); // Let radio button change settle
 
     let textareaResult;
 
@@ -178,14 +165,23 @@ export async function* handleCoverLetter(ctx: WorkflowContext): AsyncGenerator<s
         throw new Error(`Generated cover letter is too short: ${coverLetterText?.length || 0} chars`);
       }
 
-      // Use sendKeys to simulate human typing - this triggers proper events
-      printLog("🔍 Step 4: Typing AI-generated cover letter text using sendKeys...");
-      await textarea.sendKeys(coverLetterText);
-      printLog("✅ Step 4: Text typed successfully");
+      // Inject the text via JS (instantaneous) then fire React-compatible events.
+      // sendKeys types character-by-character and takes 60+ seconds for a full cover
+      // letter, which exceeds the step timeout and prevents the resume step from running.
+      printLog("🔍 Step 4: Injecting cover letter text via JS...");
+      await ctx.driver.executeScript(`
+        const el = arguments[0];
+        const text = arguments[1];
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+        nativeInputValueSetter.call(el, text);
+        el.dispatchEvent(new Event('input',  { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      `, textarea, coverLetterText);
+      printLog("✅ Step 4: Cover letter text injected successfully");
 
-      // Give it a moment to process
+      // Brief pause so React processes the synthetic events
       printLog("🔍 Step 5: Waiting for form processing...");
-      await ctx.driver.sleep(1000);
+      await ctx.driver.sleep(1500);
       printLog("✅ Step 5: Processing wait complete");
 
       // Verify the content was set

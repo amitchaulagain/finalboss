@@ -968,46 +968,57 @@ export async function* clickContinueButton(ctx: WorkflowContext): AsyncGenerator
       printLog(`🔥 VALIDATION ERRORS: ${formState.errorMessages.join(', ')}`);
     }
 
-    const continueClicked = await ctx.driver.executeScript(`
-      const continueSelectors = [
-        'button[data-testid="continue-button"]',
-        'button:contains("Continue")',
-        'button:contains("Next")'
-      ];
+    // Wait up to 15 s for the continue button to be present and enabled before clicking.
+    // This guards against clicking before an in-progress resume upload has finished.
+    let continueBtn: import('selenium-webdriver').WebElement | null = null;
+    try {
+      const { By, until } = await import('selenium-webdriver');
 
-      for (const selector of continueSelectors) {
-        let button;
-        if (selector.includes(':contains')) {
-          const text = selector.match(/contains\\(\"([^\"]+)\"\\)/)[1];
-          const buttons = Array.from(document.querySelectorAll('button')).filter(btn =>
-            btn.textContent.toLowerCase().includes(text.toLowerCase())
-          );
-          button = buttons.find(btn => btn.offsetParent !== null && !btn.disabled);
-        } else {
-          button = document.querySelector(selector);
-        }
-
-        if (button && button.offsetParent !== null && !button.disabled) {
-          button.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          setTimeout(() => {
-            button.click();
-            console.log('Continue button clicked');
-          }, 300);
-          return true;
+      // Try the explicit data-testid first
+      try {
+        continueBtn = await ctx.driver.wait(
+          until.elementLocated(By.css('button[data-testid="continue-button"]')),
+          10000,
+          'Continue button not found within 10 s'
+        );
+      } catch {
+        // Fall back to text-based search
+        printLog('⚠️ data-testid continue button not found, searching by text...');
+        const buttons = await ctx.driver.findElements(By.css('button'));
+        for (const btn of buttons) {
+          const text = (await btn.getText()).toLowerCase();
+          if (text === 'continue' || text === 'next') {
+            continueBtn = btn;
+            break;
+          }
         }
       }
 
-      return false;
-    `);
+      if (!continueBtn) {
+        printLog("Continue button not found");
+        yield "continue_button_not_found";
+        return;
+      }
 
-    if (continueClicked) {
-      await ctx.driver.sleep(2000); // Wait for navigation/page change
-      printLog("Continue button clicked successfully");
-      yield "continue_clicked";
-    } else {
-      printLog("Continue button not found");
-      yield "continue_button_not_found";
+      // Wait until the button is enabled (not disabled)
+      await ctx.driver.wait(
+        until.elementIsEnabled(continueBtn),
+        15000,
+        'Continue button remained disabled for 15 s — a required field may still be incomplete'
+      );
+      printLog('✅ Continue button is enabled — clicking natively...');
+
+      await ctx.driver.executeScript('arguments[0].scrollIntoView({block:"center"});', continueBtn);
+      await continueBtn.click(); // native Selenium click — fires React synthetic events correctly
+    } catch (btnErr) {
+      printLog(`Continue button interaction failed: ${btnErr}`);
+      yield "continue_button_error";
+      return;
     }
+
+    await ctx.driver.sleep(2000); // Wait for navigation/page change
+    printLog("Continue button clicked successfully");
+    yield "continue_clicked";
 
   } catch (error) {
     printLog(`Continue button error: ${error}`);

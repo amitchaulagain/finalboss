@@ -150,35 +150,35 @@ steps_config:
     step: 11
     func: "getCurrentStep"
     transitions:
-      current_step_choose_documents: "handle_cover_letter"
+      current_step_choose_documents: "handle_resume_selection"
       current_step_employer_questions: "handle_employer_questions"
       current_step_update_profile: "close_quick_apply_and_continue_search"
       current_step_review_submit: "close_quick_apply_and_continue_search"
       current_step_unknown: "close_quick_apply_and_continue_search"
-      progress_bar_not_found: "handle_cover_letter"
+      progress_bar_not_found: "handle_resume_selection"
       progress_bar_evaluation_error: "close_quick_apply_and_continue_search"
     timeout: 10
     on_timeout_event: "progress_bar_evaluation_error"
 
-  handle_cover_letter:
-    step: 11.5
-    func: "handleCoverLetter"
-    transitions:
-      cover_letter_filled: "handle_resume_selection"
-      cover_letter_not_required: "handle_resume_selection"
-      cover_letter_error: "stay_put_for_inspection"
-    timeout: 60
-    on_timeout_event: "cover_letter_error"
-
   handle_resume_selection:
-    step: 13
+    step: 11.5
     func: "handleResumeSelection"
     transitions:
-      resume_selected: "click_continue_button"
-      resume_not_required: "click_continue_button"
+      resume_selected: "handle_cover_letter"
+      resume_not_required: "handle_cover_letter"
       resume_selection_error: "close_quick_apply_and_continue_search"
-    timeout: 60
+    timeout: 120
     on_timeout_event: "resume_selection_error"
+
+  handle_cover_letter:
+    step: 13
+    func: "handleCoverLetter"
+    transitions:
+      cover_letter_filled: "click_continue_button"
+      cover_letter_not_required: "click_continue_button"
+      cover_letter_error: "stay_put_for_inspection"
+    timeout: 120
+    on_timeout_event: "cover_letter_error"
 
   click_continue_button:
     step: 14
